@@ -30,7 +30,7 @@ func newService(t *testing.T) (*auth.Service, *auth.TokenIssuer, *db.Pool, *cloc
 	params.Memory = 1024 // keep the suite fast
 	params.Iterations = 1
 
-	return auth.NewService(pool, issuer, nil, c, params), issuer, pool, c
+	return auth.NewService(pool, issuer, nil, nil, c, params), issuer, pool, c
 }
 
 func signup(t *testing.T, svc *auth.Service, email string) (auth.Account, auth.Tokens) {

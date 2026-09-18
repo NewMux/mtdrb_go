@@ -23,6 +23,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/ledger"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
+	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
 	"github.com/NewMux/mtdrb_go/internal/testsupport"
 )
@@ -72,7 +73,8 @@ func newHarness(t *testing.T) *harness {
 	params.Memory, params.Iterations = 1024, 1
 
 	ledgerSvc := ledger.NewService(wall)
-	authSvc := auth.NewService(pool, issuer, ledgerSvc, wall, params)
+	programmingSvc := programming.NewService(wall)
+	authSvc := auth.NewService(pool, issuer, ledgerSvc, programmingSvc, wall, params)
 	crmSvc := crm.NewService(wall, []byte(strings.Repeat("c", 32)))
 	mediaSvc := media.NewService(&fakePresigner{}, wall, cfg.PresignTTL)
 	billingSvc := billing.NewService(ledgerSvc, wall)
@@ -85,6 +87,7 @@ func newHarness(t *testing.T) *harness {
 		Media:       media.NewHandler(mediaSvc, pool),
 		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
 		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
+		Programming: programming.NewHandler(programmingSvc, pool),
 		TokenIssuer: issuer,
 	})
 
@@ -848,5 +851,149 @@ func TestFailedRequestReleasesItsIdempotencyKey(t *testing.T) {
 		map[string]any{"amount_minor": 50000, "instrument": "cash"}, key)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("retry after failure = %d: %s", resp.StatusCode, body)
+	}
+}
+
+// The programming path over HTTP: the library is there on day one, a
+// programme is built, and a set is logged against it.
+func TestProgrammingOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+
+	// Signup seeded the library, so a trainer can build immediately.
+	status, library := h.do(http.MethodGet, "/v1/exercises?search=squat", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list exercises = %d %v", status, library)
+	}
+	exercises := library["exercises"].([]any)
+	if len(exercises) == 0 {
+		t.Fatal("the exercise library is empty after signup")
+	}
+	squatID := exercises[0].(map[string]any)["id"].(string)
+
+	_, client := h.do(http.MethodPost, "/v1/clients", token, map[string]any{"full_name": "Dana"})
+	clientID := client["id"].(string)
+
+	status, program := h.do(http.MethodPost, "/v1/programs", token, map[string]any{
+		"name": "8-Week Base", "description": "General preparation",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create programme = %d %v", status, program)
+	}
+	programID := program["id"].(string)
+
+	status, block := h.do(http.MethodPost, "/v1/programs/"+programID+"/blocks", token,
+		map[string]any{"name": "Accumulation", "weeks": 4})
+	if status != http.StatusCreated {
+		t.Fatalf("add block = %d %v", status, block)
+	}
+	blockID := block["id"].(string)
+
+	status, day := h.do(http.MethodPost, "/v1/programs/blocks/"+blockID+"/days", token,
+		map[string]any{"name": "Day 1 — Lower"})
+	if status != http.StatusCreated {
+		t.Fatalf("add day = %d %v", status, day)
+	}
+	dayID := day["id"].(string)
+
+	if status, pres := h.do(http.MethodPost, "/v1/programs/days/"+dayID+"/exercises", token,
+		map[string]any{
+			"exercise_id": squatID, "target_sets": 4,
+			"target_reps_min": 6, "target_reps_max": 8, "target_rpe_tenths": 80,
+		}); status != http.StatusCreated {
+		t.Fatalf("prescribe = %d %v", status, pres)
+	}
+
+	// The structure reads back whole.
+	status, full := h.do(http.MethodGet, "/v1/programs/"+programID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("get programme = %d %v", status, full)
+	}
+	if full["total_weeks"].(float64) != 4 {
+		t.Errorf("total weeks = %v, want 4", full["total_weeks"])
+	}
+
+	if status, assignment := h.do(http.MethodPost, "/v1/programs/"+programID+"/assign", token,
+		map[string]any{"client_id": clientID}); status != http.StatusCreated {
+		t.Fatalf("assign = %d %v", status, assignment)
+	}
+
+	// Floor logging.
+	status, workout := h.do(http.MethodPost, "/v1/workouts", token, map[string]any{
+		"client_id": clientID, "day_id": dayID, "week_number": 1,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("start workout = %d %v", status, workout)
+	}
+	workoutID := workout["id"].(string)
+
+	for set := 1; set <= 3; set++ {
+		if status, logged := h.do(http.MethodPost, "/v1/workouts/"+workoutID+"/sets", token,
+			map[string]any{
+				"exercise_id": squatID, "set_index": set,
+				"reps": 8, "load_grams": 100000, "rpe_tenths": 80,
+			}); status != http.StatusOK {
+			t.Fatalf("log set %d = %d %v", set, status, logged)
+		}
+	}
+
+	status, completed := h.do(http.MethodPost, "/v1/workouts/"+workoutID+"/complete", token,
+		map[string]any{"notes": "solid"})
+	if status != http.StatusOK {
+		t.Fatalf("complete = %d %v", status, completed)
+	}
+	if got := completed["sets"].([]any); len(got) != 3 {
+		t.Errorf("workout has %d sets, want 3", len(got))
+	}
+
+	// Progression reads back the working volume.
+	status, progression := h.do(http.MethodGet,
+		"/v1/workouts/clients/"+clientID+"/exercises/"+squatID+"/progression", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("progression = %d %v", status, progression)
+	}
+	points := progression["points"].([]any)
+	if len(points) != 1 {
+		t.Fatalf("got %d progression points, want 1", len(points))
+	}
+	if points[0].(map[string]any)["volume_gram_reps"].(float64) != 2_400_000 {
+		t.Errorf("volume = %v, want 2400000 (3 x 8 x 100kg)", points[0].(map[string]any)["volume_gram_reps"])
+	}
+}
+
+// A trainer must not reach another's programmes or exercise library.
+func TestProgrammingIsTenantIsolatedOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	alice := h.signup("alice@gym.io")
+	bob := h.signup("bob@gym.io")
+
+	status, program := h.do(http.MethodPost, "/v1/programs", alice, map[string]any{"name": "Alice's Plan"})
+	if status != http.StatusCreated {
+		t.Fatalf("create = %d %v", status, program)
+	}
+	programID := program["id"].(string)
+
+	status, bobsList := h.do(http.MethodGet, "/v1/programs", bob, nil)
+	if status != http.StatusOK {
+		t.Fatal(status)
+	}
+	if got := bobsList["programs"].([]any); len(got) != 0 {
+		t.Errorf("Bob sees %d of Alice's programmes", len(got))
+	}
+	if status, _ := h.do(http.MethodGet, "/v1/programs/"+programID, bob, nil); status != http.StatusNotFound {
+		t.Errorf("cross-tenant programme fetch = %d, want 404", status)
+	}
+
+	// Each tenant has their own seeded library, not a shared one.
+	_, aliceLib := h.do(http.MethodGet, "/v1/exercises?limit=500", alice, nil)
+	_, bobLib := h.do(http.MethodGet, "/v1/exercises?limit=500", bob, nil)
+	aliceIDs := map[string]bool{}
+	for _, e := range aliceLib["exercises"].([]any) {
+		aliceIDs[e.(map[string]any)["id"].(string)] = true
+	}
+	for _, e := range bobLib["exercises"].([]any) {
+		if aliceIDs[e.(map[string]any)["id"].(string)] {
+			t.Fatal("two tenants share an exercise row")
+		}
 	}
 }

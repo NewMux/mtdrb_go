@@ -18,6 +18,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
+	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
 )
 
@@ -59,7 +60,8 @@ func run() error {
 	// Signup provisions the tenant's chart of accounts in the same transaction
 	// that creates the tenant: a tenant that cannot post is not a usable one.
 	ledgerSvc := ledger.NewService(wall)
-	authSvc := auth.NewService(pool, issuer, ledgerSvc, wall, auth.DefaultArgon2Params())
+	programmingSvc := programming.NewService(wall)
+	authSvc := auth.NewService(pool, issuer, ledgerSvc, programmingSvc, wall, auth.DefaultArgon2Params())
 
 	presigner, err := media.NewS3Presigner(media.S3Config{
 		Endpoint:  cfg.StorageEndpoint,
@@ -88,6 +90,7 @@ func run() error {
 		Media:       media.NewHandler(mediaSvc, pool),
 		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
 		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
+		Programming: programming.NewHandler(programmingSvc, pool),
 		TokenIssuer: issuer,
 	})
 

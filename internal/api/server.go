@@ -16,6 +16,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
 	"github.com/NewMux/mtdrb_go/internal/media"
+	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
 )
 
@@ -29,11 +30,12 @@ type Server struct {
 
 // Deps are the collaborators the router mounts.
 type Deps struct {
-	Auth       *auth.Handler
-	CRM        *crm.Handler
-	Media      *media.Handler
-	Scheduling *scheduling.Handler
-	Billing    *billing.Handler
+	Auth        *auth.Handler
+	CRM         *crm.Handler
+	Media       *media.Handler
+	Scheduling  *scheduling.Handler
+	Billing     *billing.Handler
+	Programming *programming.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
 }
@@ -102,6 +104,15 @@ func (s *Server) routes(deps Deps) chi.Router {
 				})
 				trainer.Mount("/payment-methods", deps.Billing.PaymentMethodRoutes())
 				trainer.Mount("/receivables", deps.Billing.ReceivablesRoutes())
+				trainer.Mount("/programs", deps.Programming.ProgramRoutes())
+			})
+
+			// Reachable by portal clients too: logging your own sets is the
+			// point of the companion app, and the library is what tells you
+			// what the movement is. Row-level security narrows both.
+			private.Group(func(shared chi.Router) {
+				shared.Mount("/exercises", deps.Programming.ExerciseRoutes())
+				shared.Mount("/workouts", deps.Programming.WorkoutRoutes())
 			})
 		})
 	})

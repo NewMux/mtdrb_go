@@ -22,21 +22,31 @@ type ChartSeeder interface {
 	SeedChartOfAccounts(ctx context.Context, tx pgx.Tx, tenantID ids.ID, currency string) error
 }
 
+// LibrarySeeder installs a tenant's opening exercise library.
+//
+// Same reasoning as the chart of accounts, for the same reason it runs in the
+// same transaction: a trainer opening the app for the first time should be
+// able to build a programme, not stare at an empty list.
+type LibrarySeeder interface {
+	SeedLibrary(ctx context.Context, tx pgx.Tx, tenantID ids.ID) error
+}
+
 // Service implements registration, login and token rotation.
 type Service struct {
-	pool   *db.Pool
-	issuer *TokenIssuer
-	seeder ChartSeeder
-	clock  clock.Clock
-	params Argon2Params
+	pool    *db.Pool
+	issuer  *TokenIssuer
+	seeder  ChartSeeder
+	library LibrarySeeder
+	clock   clock.Clock
+	params  Argon2Params
 }
 
 // NewService builds the authentication service.
-func NewService(pool *db.Pool, issuer *TokenIssuer, seeder ChartSeeder, c clock.Clock, p Argon2Params) *Service {
+func NewService(pool *db.Pool, issuer *TokenIssuer, seeder ChartSeeder, library LibrarySeeder, c clock.Clock, p Argon2Params) *Service {
 	if c == nil {
 		c = clock.System{}
 	}
-	return &Service{pool: pool, issuer: issuer, seeder: seeder, clock: c, params: p}
+	return &Service{pool: pool, issuer: issuer, seeder: seeder, library: library, clock: c, params: p}
 }
 
 // Tokens is the credential set returned by login and refresh.
@@ -147,6 +157,11 @@ func (s *Service) Signup(ctx context.Context, in SignupInput, userAgent string) 
 		if s.seeder != nil {
 			if err := s.seeder.SeedChartOfAccounts(ctx, tx, account.TenantID, currency); err != nil {
 				return errs.Wrap(err, "seed chart of accounts")
+			}
+		}
+		if s.library != nil {
+			if err := s.library.SeedLibrary(ctx, tx, account.TenantID); err != nil {
+				return errs.Wrap(err, "seed exercise library")
 			}
 		}
 
