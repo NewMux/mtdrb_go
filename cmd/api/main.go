@@ -11,8 +11,10 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/api"
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/config"
+	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
+	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
 )
@@ -57,8 +59,29 @@ func run() error {
 	ledgerSvc := ledger.NewService(wall)
 	authSvc := auth.NewService(pool, issuer, ledgerSvc, wall, auth.DefaultArgon2Params())
 
+	presigner, err := media.NewS3Presigner(media.S3Config{
+		Endpoint:  cfg.StorageEndpoint,
+		Region:    cfg.StorageRegion,
+		Bucket:    cfg.StorageBucket,
+		AccessKey: cfg.StorageAccessKey,
+		SecretKey: cfg.StorageSecretKey,
+		UseSSL:    cfg.StorageUseSSL,
+	})
+	if err != nil {
+		return err
+	}
+	// Fail at startup rather than on the first progress photo.
+	if err := presigner.EnsureBucket(ctx, cfg.StorageRegion); err != nil {
+		return err
+	}
+
+	crmSvc := crm.NewService(wall, cfg.ColumnEncryptionKey)
+	mediaSvc := media.NewService(presigner, wall, cfg.PresignTTL)
+
 	srv := api.New(cfg, pool, log, api.Deps{
 		Auth:        auth.NewHandler(authSvc),
+		CRM:         crm.NewHandler(crmSvc, pool),
+		Media:       media.NewHandler(mediaSvc, pool),
 		TokenIssuer: issuer,
 	})
 

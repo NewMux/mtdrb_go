@@ -11,8 +11,10 @@ import (
 
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/config"
+	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
+	"github.com/NewMux/mtdrb_go/internal/media"
 )
 
 // Server is the assembled HTTP application.
@@ -25,7 +27,9 @@ type Server struct {
 
 // Deps are the collaborators the router mounts.
 type Deps struct {
-	Auth *auth.Handler
+	Auth  *auth.Handler
+	CRM   *crm.Handler
+	Media *media.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
 }
@@ -63,6 +67,21 @@ func (s *Server) routes(deps Deps) chi.Router {
 		v1.Group(func(private chi.Router) {
 			private.Use(auth.Authenticate(deps.TokenIssuer))
 			private.Mount("/session", deps.Auth.AuthenticatedRoutes())
+
+			// Media is reachable by both trainers and portal clients; the
+			// handler binds the portal client id so row-level security
+			// narrows each caller to what they may see.
+			private.Mount("/media", deps.Media.Routes())
+
+			// Trainer-only. RequireTrainer rejects portal sessions at the
+			// route boundary, before any handler runs, so a client token
+			// cannot reach another client's record even if a handler were
+			// to forget its own check.
+			private.Group(func(trainer chi.Router) {
+				trainer.Use(httpx.RequireTrainer)
+				trainer.Mount("/clients", deps.CRM.Routes())
+				trainer.Mount("/waivers", deps.CRM.WaiverRoutes())
+			})
 		})
 	})
 
