@@ -1,0 +1,46 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - errorlint
+    - rowserrcheck
+    - sqlclosecheck
+    - nilerr
+    - noctx
+    - gosec
+    - misspell
+    - unconvert
+    - wastedassign
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    gosec:
+      excludes:
+        # Integer conversions are bounded by config validation; the ledger
+        # never narrows a money value.
+        - G115
+    staticcheck:
+      checks: ["all"]
+
+  exclusions:
+    rules:
+      # Tests may ignore errors on cleanup paths and use weak randomness.
+      - path: _test\.go
+        linters: [errcheck, gosec, noctx]
+      # Generated query code is not ours to lint.
+      - path: internal/db/gen/
+        linters: [errcheck, staticcheck, unused, gosec]
+
+formatters:
+  enable:
+    - gofmt

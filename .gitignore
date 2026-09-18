@@ -1,0 +1,25 @@
+# Binaries
+/bin/
+*.exe
+
+# Test and coverage output
+*.out
+coverage.*
+
+# Local environment
+.env
+.env.local
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Expo / Node
+app/node_modules/
+app/.expo/
+app/dist/
+app/web-build/
+node_modules/
+npm-debug.log*
