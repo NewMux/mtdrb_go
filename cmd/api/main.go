@@ -12,6 +12,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/db"
+	"github.com/NewMux/mtdrb_go/internal/ledger"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
 )
@@ -51,9 +52,10 @@ func run() error {
 	wall := clock.System{}
 	issuer := auth.NewTokenIssuer(cfg.JWTSigningKey, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, wall)
 
-	// The chart-of-accounts seeder is wired in with the ledger (M2); until
-	// then signup provisions a tenant without opening accounts.
-	authSvc := auth.NewService(pool, issuer, nil, wall, auth.DefaultArgon2Params())
+	// Signup provisions the tenant's chart of accounts in the same transaction
+	// that creates the tenant: a tenant that cannot post is not a usable one.
+	ledgerSvc := ledger.NewService(wall)
+	authSvc := auth.NewService(pool, issuer, ledgerSvc, wall, auth.DefaultArgon2Params())
 
 	srv := api.New(cfg, pool, log, api.Deps{
 		Auth:        auth.NewHandler(authSvc),
