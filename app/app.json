@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "CoachPulse",
+    "slug": "coachpulse",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "coachpulse",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": true, "bundleIdentifier": "io.coachpulse.app" },
+    "android": { "package": "io.coachpulse.app", "edgeToEdgeEnabled": true },
+    "web": { "bundler": "metro", "output": "static" },
+    "plugins": ["expo-router", "expo-secure-store"],
+    "extra": {
+      "apiBaseUrl": "http://localhost:8080"
+    }
+  }
+}

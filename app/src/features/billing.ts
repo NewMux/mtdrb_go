@@ -1,0 +1,77 @@
+/**
+ * Selling a package.
+ *
+ * The one flow in the app that is deliberately **online-only**.
+ *
+ * Everything else here queues an operation and converges later, but issuing an
+ * invoice takes a gap-free number from a counter the server holds under a row
+ * lock. Two devices issuing offline would both mint "2026-014", and in most of
+ * the EU a duplicated invoice number is not a bug to reconcile later — it is a
+ * tax problem. So this asks the server, and says so plainly when there is no
+ * signal.
+ *
+ * Each step carries an idempotency key, because a retry after a timeout must
+ * not sell the client a second pack.
+ */
+
+import type { ApiClient } from '@/api/client';
+import type { Invoice, ShareLink } from '@/api/types';
+import { newId } from '@/lib/id';
+
+export interface PackageSale {
+  clientId: string;
+  /** What the client sees on the invoice, e.g. "10-session personal training pack". */
+  description: string;
+  credits: number;
+  /** Price of one session, in minor units. */
+  unitPriceMinor: number;
+  currency?: string;
+  dueDate?: string | null;
+  expiresOn?: string | null;
+}
+
+/**
+ * Drafts, issues and shares a package invoice.
+ *
+ * Three calls rather than one because that is the state machine: a draft posts
+ * nothing and takes no number, so a mistake is deleted rather than reversed.
+ * Issuing is what credits Deferred Revenue and grants the credits.
+ */
+export async function sellPackage(
+  api: ApiClient,
+  sale: PackageSale,
+): Promise<{ invoice: Invoice; share: ShareLink | null }> {
+  const draftKey = newId();
+
+  const draft = await api.post<Invoice>('/v1/invoices', {
+    client_id: sale.clientId,
+    currency: sale.currency,
+    due_date: sale.dueDate ?? null,
+    lines: [{
+      kind: 'package',
+      description: sale.description,
+      quantity: sale.credits,
+      unit_price_minor: sale.unitPriceMinor,
+      package_credits: sale.credits,
+      credits_expire_on: sale.expiresOn ?? null,
+    }],
+  }, draftKey);
+
+  const invoice = await api.post<Invoice>(
+    `/v1/invoices/${draft.id}/issue`,
+    { due_date: sale.dueDate ?? null },
+    newId(),
+  );
+
+  // The link is a convenience, not part of the sale. A failure here leaves a
+  // perfectly good issued invoice, so it must not fail the whole flow — the
+  // trainer can mint another link from the invoice at any time.
+  let share: ShareLink | null = null;
+  try {
+    share = await api.post<ShareLink>(`/v1/invoices/${invoice.id}/share`, {});
+  } catch {
+    share = null;
+  }
+
+  return { invoice, share };
+}

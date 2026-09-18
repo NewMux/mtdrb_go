@@ -1,0 +1,1657 @@
+openapi: 3.1.0
+
+info:
+  title: CoachPulse API
+  version: "1.0.0"
+  description: |
+    The API behind CoachPulse — a business operating system for independent
+    personal trainers.
+
+    Two conventions run through everything here and are worth reading before
+    the endpoints.
+
+    **Money is integer minor units.** Every amount is a whole number of cents,
+    fils or agorot, paired with an ISO-4217 code. There are no floats. A
+    ledger that rounds is a ledger that cannot be reconciled.
+
+    **Errors carry a stable machine code.** Clients branch on `error.code`,
+    never on `error.message`: the message is for humans and may be reworded,
+    the code is part of the contract. `insufficient_credits` carries the
+    remaining balance in `meta`, which is what lets the app offer a renewal
+    at the moment a pack runs out.
+
+    Measurements follow money's lead: loads are grams, RPE is tenths (85 is
+    RPE 8.5), body fat is basis points. Display units are the client's choice;
+    the stored value never rounds.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.coachpulse.io
+    description: Production
+
+tags:
+  - name: Authentication
+  - name: Sync
+    description: |
+      Offline support. Pull mirrors rows into local storage; push carries
+      *operations*, not rows — see `PushOperation`.
+  - name: Clients
+  - name: Scheduling
+  - name: Credits
+  - name: Invoices
+  - name: Programming
+  - name: Public
+    description: The unauthenticated shared-invoice link.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [Authentication]
+      summary: Liveness
+      description: Deliberately does not touch the database — a liveness probe
+        that fails on a database blip restarts a healthy process.
+      security: []
+      responses:
+        "200": { description: Alive }
+
+  /readyz:
+    get:
+      tags: [Authentication]
+      summary: Readiness
+      security: []
+      responses:
+        "200": { description: Ready to serve }
+        "503": { description: Database unreachable }
+
+  /v1/auth/signup:
+    post:
+      tags: [Authentication]
+      summary: Register a trainer and their business
+      description: Provisions the tenant, its owner, its chart of accounts and
+        its exercise library in one transaction.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401":
+          description: |
+            Wrong password and unknown account are deliberately
+            indistinguishable, so this endpoint cannot be used to discover
+            which emails are registered.
+
+  /v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Exchange a refresh token for a new pair
+      description: |
+        Refresh tokens rotate on every use and are tracked as a family.
+        Presenting one that has already been rotated means two parties hold
+        it, so the entire family is revoked and the response is
+        `refresh_token_reused`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: Rotated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/session/me:
+    get:
+      tags: [Authentication]
+      summary: Who the current token authenticates
+      responses:
+        "200":
+          description: The caller
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string, format: uuid }
+                  subject_id: { type: string, format: uuid }
+                  kind: { type: string, enum: [user, client] }
+                  role: { type: string }
+
+  /v1/session/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke this device's token family
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "204": { description: Signed out }
+
+  /v1/sync/pull:
+    get:
+      tags: [Sync]
+      summary: Fetch rows changed since a cursor
+      description: |
+        Returns changed rows per collection. A removal is not a separate
+        tombstone: the row comes back with `deleted_at` set, and the client
+        drops it locally.
+
+        The cursor is opaque and tracks progress **per collection**. A single
+        global sequence cannot work — a page that fills its budget on one
+        collection would advance the shared cursor past rows in another, and
+        those rows would never be delivered again.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: The token from a previous pull. Omit for a first sync.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 500, maximum: 500 }
+      responses:
+        "200":
+          description: Changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PullResult" }
+
+  /v1/sync/push:
+    post:
+      tags: [Sync]
+      summary: Drain a device's outbox
+      description: |
+        Carries operations, not rows. A generic row upsert would bypass the
+        business rules — a synced attendance row that did not burn a credit or
+        post revenue would leave the calendar and the books disagreeing.
+
+        Returns `200` even when some operations conflict: the batch was
+        processed, and each operation carries its own outcome. A blanket
+        non-2xx would make the outbox retry the ones that succeeded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operations]
+              properties:
+                operations:
+                  type: array
+                  maxItems: 200
+                  items: { $ref: "#/components/schemas/PushOperation" }
+      responses:
+        "200":
+          description: Batch processed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PushResult" }
+
+  /v1/sync/checkpoint:
+    get:
+      tags: [Sync]
+      summary: The current high-water mark
+      description: For a client that wants to start syncing from now rather
+        than replaying history.
+      responses:
+        "200":
+          description: Cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cursor: { type: string }
+
+  /v1/clients:
+    get:
+      tags: [Clients]
+      summary: List clients
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/ClientStatus" } }
+        - { name: search, in: query, schema: { type: string }, description: Matches name, email and phone }
+        - { name: tag_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: Clients
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clients:
+                    type: array
+                    items: { $ref: "#/components/schemas/Client" }
+    post:
+      tags: [Clients]
+      summary: Create a client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClientInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Client" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/clients/{clientID}:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Clients]
+      summary: Fetch a client
+      parameters:
+        - name: include_medical
+          in: query
+          schema: { type: boolean, default: false }
+          description: |
+            Medical notes are encrypted at rest and returned only when asked
+            for explicitly, so an ordinary profile fetch cannot carry them into
+            a log or a cache.
+      responses:
+        "200":
+          description: The client
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Client" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Clients]
+      summary: Update a client
+      description: |
+        Omitting a field leaves it unchanged; sending `null` clears it. The two
+        are genuinely different, which is why nullable fields are distinguished
+        rather than coalesced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClientInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Client" }
+    delete:
+      tags: [Clients]
+      summary: Archive a client
+      description: A soft delete. Their sessions and invoices are referenced by
+        immutable journal entries, so the row is hidden rather than removed.
+      responses:
+        "204": { description: Archived }
+
+  /v1/clients/{clientID}/biometrics:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Clients]
+      summary: Measurement history, newest first
+      responses:
+        "200":
+          description: Measurements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/BiometricEntry" }
+    post:
+      tags: [Clients]
+      summary: Record a measurement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BiometricInput" }
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BiometricEntry" }
+
+  /v1/sessions:
+    get:
+      tags: [Scheduling]
+      summary: The calendar over a window
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session_" }
+    post:
+      tags: [Scheduling]
+      summary: Book a session
+      description: |
+        Refused with `scheduling_conflict` if the slot overlaps an existing
+        session including the tenant's buffer. The check is a database
+        exclusion constraint, so two devices syncing the same booking cannot
+        both win.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_type_id, starts_at]
+              properties:
+                session_type_id: { type: string, format: uuid }
+                starts_at: { type: string, format: date-time }
+                client_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                location: { type: string }
+                notes: { type: string }
+      responses:
+        "201":
+          description: Booked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session_" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/sessions/attendees/{attendeeID}/mark:
+    parameters:
+      - { name: attendeeID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Scheduling]
+      summary: Record one attendee's outcome
+      description: |
+        The heart of Journey A. Marking `completed` burns a credit and posts
+        `DR Deferred Revenue / CR Training Revenue` in the same transaction —
+        either all of it lands or none of it does.
+
+        Attendance is per attendee, not per session: in a semi-private slot one
+        client can complete while another no-shows.
+
+        With no credits left the response is `422 insufficient_credits`, and
+        `meta.remaining` is what the app uses to offer a renewal.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: "#/components/schemas/AttendanceStatus" }
+                notes: { type: string }
+                allow_overdraft: { type: boolean }
+      responses:
+        "200":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarkResult" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/sessions/mark-day:
+    post:
+      tags: [Scheduling]
+      summary: Bulk roster check-off
+      description: |
+        Confirms a whole day in one action. Reports who could **not** be marked
+        and why, rather than skipping them silently — a trainer tapping "mark
+        everyone complete" must not be left believing it worked for a client
+        who was out of credit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                day: { type: string, format: date }
+                status: { $ref: "#/components/schemas/AttendanceStatus" }
+      responses:
+        "200":
+          description: Outcome
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DayResult" }
+
+  /v1/sessions/session-types:
+    get:
+      tags: [Scheduling]
+      summary: List bookable session types
+      responses:
+        "200":
+          description: Types
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_types:
+                    type: array
+                    items: { $ref: "#/components/schemas/SessionType" }
+    post:
+      tags: [Scheduling]
+      summary: Create a session type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, duration_minutes]
+              properties:
+                name: { type: string }
+                duration_minutes: { type: integer }
+                capacity: { type: integer, default: 1, description: 1 is one-to-one }
+                credit_cost: { type: integer, default: 1 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionType" }
+
+  /v1/credits/clients/{clientID}/balance:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Credits]
+      summary: A client's credit position
+      description: May be negative — an overdrawn client's debt is shown, not
+        hidden behind a zero.
+      responses:
+        "200":
+          description: Balance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreditBalance" }
+
+  /v1/credits/packages:
+    post:
+      tags: [Credits]
+      summary: Grant a prepaid pack directly
+      description: |
+        For a comped or migrated pack. A pack sold on an invoice is created by
+        issuing that invoice instead, so the liability is not counted twice.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id, credits, unit_price_minor]
+              properties:
+                client_id: { type: string, format: uuid }
+                name: { type: string }
+                credits: { type: integer, minimum: 1 }
+                unit_price_minor: { type: integer, minimum: 0 }
+                currency: { type: string }
+                expires_at: { type: string, format: date, nullable: true }
+      responses:
+        "201":
+          description: Granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Package" }
+
+  /v1/invoices:
+    get:
+      tags: [Invoices]
+      summary: List invoices
+      parameters:
+        - { name: client_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/InvoiceStatus" } }
+        - { name: outstanding, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Invoices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invoices:
+                    type: array
+                    items: { $ref: "#/components/schemas/Invoice" }
+    post:
+      tags: [Invoices]
+      summary: Create a draft
+      description: A draft posts nothing and takes no number, so deleting one
+        leaves no gap in the numbering.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvoiceDraftInput" }
+      responses:
+        "201":
+          description: Drafted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+
+  /v1/invoices/{invoiceID}:
+    parameters:
+      - { name: invoiceID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Invoices]
+      summary: Fetch an invoice
+      responses:
+        "200":
+          description: The invoice
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+
+  /v1/invoices/{invoiceID}/issue:
+    parameters:
+      - { name: invoiceID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Invoices]
+      summary: Issue a draft
+      description: |
+        Assigns a gap-free number, posts to the ledger, grants any package
+        credits and snapshots the payment instructions — all in one
+        transaction.
+
+        A package line credits **Deferred Revenue**, a liability: selling ten
+        sessions is not income until they are trained.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                issue_date: { type: string, format: date }
+                due_date: { type: string, format: date }
+                payment_method_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/invoices/{invoiceID}/share:
+    parameters:
+      - { name: invoiceID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Invoices]
+      summary: Mint a shareable link
+      description: |
+        The token is returned **once**; only its hash is stored. Calling again
+        replaces the previous link, which is how a trainer revokes one sent to
+        the wrong number.
+      responses:
+        "201":
+          description: Link
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, format: uri }
+                  token: { type: string }
+    delete:
+      tags: [Invoices]
+      summary: Revoke the link
+      responses:
+        "204": { description: Revoked }
+
+  /v1/invoices/{invoiceID}/payments:
+    parameters:
+      - { name: invoiceID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Invoices]
+      summary: Payments against this invoice
+      responses:
+        "200":
+          description: Payments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payments:
+                    type: array
+                    items: { $ref: "#/components/schemas/Payment" }
+    post:
+      tags: [Invoices]
+      summary: Record a manual settlement
+      description: |
+        CoachPulse processes no cards. This records that money arrived
+        off-platform and posts `DR Cash|Bank|Wallet / CR Accounts Receivable`.
+        Revenue is untouched — receiving money moves it between assets, it does
+        not earn it.
+
+        Paying more than is owed is refused with `overpayment`: a negative
+        receivable is not a real position.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_minor, instrument]
+              properties:
+                amount_minor: { type: integer, minimum: 1 }
+                currency: { type: string }
+                instrument: { $ref: "#/components/schemas/PaymentInstrument" }
+                received_on: { type: string, format: date }
+                reference: { type: string }
+                notes: { type: string }
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment: { $ref: "#/components/schemas/Payment" }
+                  invoice: { $ref: "#/components/schemas/Invoice" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /v1/receivables:
+    get:
+      tags: [Invoices]
+      summary: Outstanding receivables, aged
+      description: Bucketed 1-30 / 31-60 / 60+ days, computed from payments
+        rather than a stored balance so it cannot drift.
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Receivables" }
+
+  /v1/payment-methods:
+    get:
+      tags: [Invoices]
+      summary: How this trainer accepts settlement
+      responses:
+        "200":
+          description: Methods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment_methods:
+                    type: array
+                    items: { $ref: "#/components/schemas/PaymentMethod" }
+    post:
+      tags: [Invoices]
+      summary: Add a settlement method
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentMethod" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentMethod" }
+
+  /v1/exercises:
+    get:
+      tags: [Programming]
+      summary: The exercise library
+      description: Seeded per tenant at signup, organised by movement pattern.
+      parameters:
+        - { name: category, in: query, schema: { $ref: "#/components/schemas/ExerciseCategory" } }
+        - { name: search, in: query, schema: { type: string }, description: Matches name, muscle and equipment }
+      responses:
+        "200":
+          description: Exercises
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exercises:
+                    type: array
+                    items: { $ref: "#/components/schemas/Exercise" }
+
+  /v1/programs:
+    get:
+      tags: [Programming]
+      summary: List programmes
+      parameters:
+        - { name: templates, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Programmes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  programs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Program" }
+    post:
+      tags: [Programming]
+      summary: Create a programme
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                is_template: { type: boolean }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Program" }
+
+  /v1/programs/{programID}:
+    parameters:
+      - { name: programID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Programming]
+      summary: A programme with its full structure
+      responses:
+        "200":
+          description: The programme
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Program" }
+
+  /v1/workouts:
+    post:
+      tags: [Programming]
+      summary: Open a workout to log sets against
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id]
+              properties:
+                client_id: { type: string, format: uuid }
+                day_id: { type: string, format: uuid, nullable: true }
+                session_id: { type: string, format: uuid, nullable: true }
+                week_number: { type: integer, default: 1 }
+                performed_on: { type: string, format: date }
+      responses:
+        "201":
+          description: Opened
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workout" }
+
+  /v1/workouts/{workoutID}/sets:
+    parameters:
+      - { name: workoutID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Log a set
+      description: |
+        Upserts on (workout, exercise, set index). Correcting a mistyped weight
+        does not create a second set three, and an outbox replay converges
+        rather than accumulating.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetLogInput" }
+      responses:
+        "200":
+          description: Logged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SetLog" }
+
+  /v1/workouts/{workoutID}/exercises/{exerciseID}/clone-previous:
+    parameters:
+      - { name: workoutID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Prefill from last session
+      description: |
+        The single tap. Copies last session's working sets into this workout as
+        **not completed**, so the trainer confirms each as it is actually done
+        — prefilled numbers that silently counted as performed would put lifts
+        in a client's history that never happened. Warm-ups are skipped.
+      responses:
+        "201":
+          description: Prefilled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workout_id: { type: string, format: uuid }
+                  cloned_from: { type: string, format: uuid, nullable: true }
+                  sets:
+                    type: array
+                    items: { $ref: "#/components/schemas/SetLog" }
+        "404":
+          description: This client has not performed this exercise before
+
+  /v1/workouts/{workoutID}/complete:
+    parameters:
+      - { name: workoutID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Finish a workout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes: { type: string }
+      responses:
+        "200":
+          description: Completed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workout" }
+
+  /v1/workouts/clients/{clientID}/exercises/{exerciseID}/progression:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Programming]
+      summary: Volume history for one lift
+      description: Working sets only — counting warm-ups and uncompleted sets
+        would make a deload read as a personal best.
+      responses:
+        "200":
+          description: Progression
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  points:
+                    type: array
+                    items: { $ref: "#/components/schemas/VolumePoint" }
+
+  /public/invoices/{token}:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Public]
+      summary: A shared invoice
+      description: |
+        The only unauthenticated surface. Serves HTML to a browser and JSON
+        when `Accept` asks for it.
+
+        The payload is deliberately narrow — the bill and how to pay it, and
+        nothing else. A revoked or forged token is a 404, never a 403: the
+        difference would confirm to a guesser that a token once existed.
+      security: []
+      responses:
+        "200":
+          description: The invoice
+          content:
+            text/html:
+              schema: { type: string }
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicInvoice" }
+        "404": { description: No such link }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      schema: { type: string, minLength: 8, maxLength: 255 }
+      description: |
+        Makes a mutating request safe to retry, which is what lets the offline
+        outbox retry aggressively. A replay returns the stored response
+        verbatim with `Idempotent-Replay: true`. Reusing a key with a
+        *different* body is refused with `idempotency_key_reused`.
+
+  responses:
+    BadRequest:
+      description: Malformed or failed validation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: |
+        No such resource in this tenant. Cross-tenant access returns 404 rather
+        than 403, so existence is not leaked.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: A state precondition was violated
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unprocessable:
+      description: Understood, but business rules refuse it
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: |
+                Stable and part of the contract — branch on this, not on the
+                message.
+              examples: [insufficient_credits, overpayment, scheduling_conflict,
+                         invoice_not_payable, invalid_state_transition,
+                         idempotency_key_reused, validation_failed]
+            message: { type: string, description: For humans; may be reworded }
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              description: Per-field validation detail
+            meta:
+              type: object
+              additionalProperties: true
+              description: |
+                Structured context the client can act on. An
+                `insufficient_credits` refusal carries `remaining` and
+                `required`, which is what drives the renewal prompt.
+            request_id: { type: string }
+
+    Session:
+      type: object
+      properties:
+        account:
+          type: object
+          properties:
+            user_id: { type: string, format: uuid }
+            tenant_id: { type: string, format: uuid }
+            email: { type: string }
+            display_name: { type: string }
+            role: { type: string }
+            currency: { type: string }
+        tokens:
+          type: object
+          properties:
+            access_token: { type: string }
+            refresh_token: { type: string }
+            expires_at: { type: string, format: date-time }
+            token_type: { type: string, examples: [Bearer] }
+
+    SignupRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12 }
+        display_name: { type: string }
+        business_name: { type: string }
+        currency: { type: string, default: USD }
+        timezone: { type: string, examples: [Europe/Berlin] }
+
+    PullResult:
+      type: object
+      properties:
+        cursor:
+          type: string
+          description: Opaque. Store it and send it back unchanged.
+        has_more:
+          type: boolean
+          description: Pull again immediately rather than waiting.
+        server_time: { type: string, format: date-time }
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              collection: { type: string }
+              rows:
+                type: array
+                items: { type: object, additionalProperties: true }
+
+    PushOperation:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Minted by the device, so a replay is recognisable.
+        type: { $ref: "#/components/schemas/OperationType" }
+        queued_at:
+          type: string
+          format: date-time
+          description: |
+            When the device recorded it. A batch applies in queued order, not
+            arrival order, so two attendance marks resolve to the trainer's
+            later decision.
+        data: { type: object, additionalProperties: true }
+
+    OperationType:
+      type: string
+      enum:
+        - attendance.mark
+        - workout.start
+        - workout.log_set
+        - workout.complete
+        - payment.record
+        - client.create
+        - client.update
+        - biometrics.record
+
+    PushResult:
+      type: object
+      properties:
+        applied: { type: integer }
+        conflicts:
+          type: integer
+          description: |
+            Refused on business grounds — out of credit, invoice already
+            settled. Surfaced to the trainer rather than resolved, because a
+            machine guessing at what someone meant to do with money is worse
+            than asking.
+        rejected: { type: integer }
+        cursor: { type: string }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              type: { $ref: "#/components/schemas/OperationType" }
+              status: { type: string, enum: [applied, conflict, rejected] }
+              result: { type: object, additionalProperties: true }
+              code: { type: string }
+              message: { type: string }
+
+    ClientStatus:
+      type: string
+      enum: [lead, active, paused, archived]
+
+    Client:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        date_of_birth: { type: string, format: date, nullable: true }
+        status: { $ref: "#/components/schemas/ClientStatus" }
+        emergency_contact_name: { type: string, nullable: true }
+        emergency_contact_phone: { type: string, nullable: true }
+        medical_notes:
+          type: string
+          nullable: true
+          description: Only present when requested with `include_medical=true`.
+        allow_overdraft: { type: boolean, nullable: true }
+        default_rate_minor: { type: integer, nullable: true }
+        notes: { type: string }
+        tags:
+          type: array
+          items: { $ref: "#/components/schemas/Tag" }
+        server_seq: { type: integer, format: int64 }
+
+    ClientInput:
+      type: object
+      properties:
+        full_name: { type: string }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        date_of_birth: { type: string, format: date, nullable: true }
+        status: { $ref: "#/components/schemas/ClientStatus" }
+        emergency_contact_name: { type: string, nullable: true }
+        emergency_contact_phone: { type: string, nullable: true }
+        medical_notes: { type: string, nullable: true }
+        allow_overdraft: { type: boolean, nullable: true }
+        default_rate_minor: { type: integer, nullable: true }
+        notes: { type: string }
+        tag_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    Tag:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        colour: { type: string, nullable: true }
+
+    BiometricEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        measured_on: { type: string, format: date }
+        weight_grams: { type: integer, nullable: true }
+        body_fat_bp:
+          type: integer
+          nullable: true
+          description: Basis points — 1550 is 15.50%.
+        circumferences:
+          type: object
+          additionalProperties: { type: integer }
+          description: Millimetres, keyed by site.
+        notes: { type: string }
+
+    BiometricInput:
+      type: object
+      properties:
+        measured_on: { type: string, format: date }
+        weight_grams: { type: integer, nullable: true }
+        body_fat_bp: { type: integer, nullable: true }
+        circumferences:
+          type: object
+          additionalProperties: { type: integer }
+        notes: { type: string }
+
+    SessionType:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        duration_minutes: { type: integer }
+        capacity: { type: integer }
+        credit_cost: { type: integer }
+        colour: { type: string, nullable: true }
+
+    Session_:
+      type: object
+      description: A booked slot on the calendar.
+      properties:
+        id: { type: string, format: uuid }
+        session_type_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        status: { type: string, enum: [scheduled, cancelled] }
+        location: { type: string }
+        notes: { type: string }
+        attendees:
+          type: array
+          items: { $ref: "#/components/schemas/Attendee" }
+        server_seq: { type: integer, format: int64 }
+
+    AttendanceStatus:
+      type: string
+      enum: [scheduled, completed, late_cancel, early_cancel, no_show]
+
+    Attendee:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        client_name: { type: string }
+        status: { $ref: "#/components/schemas/AttendanceStatus" }
+        credits_charged: { type: integer }
+        marked_at: { type: string, format: date-time, nullable: true }
+        notes: { type: string }
+
+    MarkResult:
+      type: object
+      properties:
+        attendee: { $ref: "#/components/schemas/Attendee" }
+        credits_remaining:
+          type: integer
+          description: |
+            After the change. Journey A turns on this number — at zero the app
+            offers a renewal invoice.
+        revenue_recognised: { $ref: "#/components/schemas/Money" }
+        journal_entry_id: { type: string, format: uuid, nullable: true }
+
+    DayResult:
+      type: object
+      properties:
+        marked:
+          type: array
+          items: { $ref: "#/components/schemas/MarkResult" }
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              attendee_id: { type: string, format: uuid }
+              client_id: { type: string, format: uuid }
+              client_name: { type: string }
+              reason: { type: string }
+              message: { type: string }
+
+    Money:
+      type: object
+      nullable: true
+      properties:
+        minor:
+          type: integer
+          format: int64
+          description: Whole minor units — cents, fils, agorot. Never a float.
+        currency: { type: string, minLength: 3, maxLength: 3 }
+
+    Package:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        credits_total: { type: integer }
+        credits_remaining: { type: integer }
+        unit_price_minor: { type: integer }
+        currency: { type: string }
+        purchased_on: { type: string, format: date }
+        expires_at: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [active, exhausted, expired, void] }
+
+    CreditBalance:
+      type: object
+      properties:
+        client_id: { type: string, format: uuid }
+        remaining:
+          type: integer
+          description: May be negative when a client is overdrawn.
+        next_expiry: { type: string, format: date, nullable: true }
+        packages:
+          type: array
+          items: { $ref: "#/components/schemas/Package" }
+
+    InvoiceStatus:
+      type: string
+      enum: [draft, issued, partially_paid, settled, void]
+
+    Invoice:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        client_name: { type: string }
+        number: { type: string, nullable: true, description: Assigned at issue; gap-free }
+        status: { $ref: "#/components/schemas/InvoiceStatus" }
+        currency: { type: string }
+        total_minor: { type: integer, format: int64 }
+        paid_minor: { type: integer, format: int64 }
+        balance_minor: { type: integer, format: int64 }
+        issue_date: { type: string, format: date, nullable: true }
+        due_date: { type: string, format: date, nullable: true }
+        is_overdue:
+          type: boolean
+          description: Derived from the due date and balance, never stored.
+        days_overdue: { type: integer }
+        notes: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InvoiceLine" }
+        has_share_link: { type: boolean }
+        server_seq: { type: integer, format: int64 }
+
+    InvoiceLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [package, service]
+          description: |
+            A package line sells prepaid credits and credits Deferred Revenue;
+            a service line bills work already done and credits revenue
+            directly.
+        description: { type: string }
+        quantity: { type: integer }
+        unit_price_minor: { type: integer, format: int64 }
+        amount_minor: { type: integer, format: int64 }
+        package_credits: { type: integer, nullable: true }
+
+    InvoiceDraftInput:
+      type: object
+      required: [client_id, lines]
+      properties:
+        client_id: { type: string, format: uuid }
+        currency: { type: string }
+        due_date: { type: string, format: date, nullable: true }
+        notes: { type: string }
+        lines:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [description, quantity, unit_price_minor]
+            properties:
+              kind: { type: string, enum: [package, service], default: service }
+              description: { type: string }
+              quantity: { type: integer, minimum: 1 }
+              unit_price_minor: { type: integer, minimum: 0 }
+              package_credits:
+                type: integer
+                nullable: true
+                description: Required on a package line, forbidden on a service line.
+              credits_expire_on: { type: string, format: date, nullable: true }
+
+    PaymentInstrument:
+      type: string
+      enum: [cash, bank_transfer, cheque, digital_wallet]
+      description: Decides which asset account is debited.
+
+    Payment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        amount_minor: { type: integer, format: int64 }
+        currency: { type: string }
+        instrument: { $ref: "#/components/schemas/PaymentInstrument" }
+        received_on: { type: string, format: date }
+        reference: { type: string }
+        notes: { type: string }
+
+    PaymentMethod:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [bank_transfer, digital_wallet, cash, cheque, other]
+        label: { type: string }
+        details:
+          type: object
+          description: |
+            Structured settlement fields. Which ones matter varies by country
+            and by app.
+          properties:
+            account_holder: { type: string }
+            bank_name: { type: string }
+            iban: { type: string }
+            swift_bic: { type: string }
+            account_number: { type: string }
+            routing_number: { type: string }
+            handle: { type: string, description: A P2P tag or link }
+        instructions: { type: string }
+        is_default: { type: boolean }
+
+    Receivables:
+      type: object
+      properties:
+        currency: { type: string }
+        total_minor: { type: integer, format: int64 }
+        overdue_minor: { type: integer, format: int64 }
+        not_yet_due_minor: { type: integer, format: int64 }
+        outstanding_count: { type: integer }
+        buckets:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string, examples: ["1-30 days"] }
+              from_days: { type: integer }
+              to_days: { type: integer }
+              amount_minor: { type: integer, format: int64 }
+              invoice_count: { type: integer }
+
+    PublicInvoice:
+      type: object
+      description: What an unauthenticated visitor may see — the bill and how
+        to pay it, and nothing else.
+      properties:
+        number: { type: string }
+        business_name: { type: string }
+        client_name: { type: string }
+        status: { $ref: "#/components/schemas/InvoiceStatus" }
+        currency: { type: string }
+        total_minor: { type: integer, format: int64 }
+        paid_minor: { type: integer, format: int64 }
+        balance_minor: { type: integer, format: int64 }
+        issue_date: { type: string, format: date, nullable: true }
+        due_date: { type: string, format: date, nullable: true }
+        is_overdue: { type: boolean }
+        notes: { type: string }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              description: { type: string }
+              quantity: { type: integer }
+              unit_price_minor: { type: integer, format: int64 }
+              amount_minor: { type: integer, format: int64 }
+        payment_instructions:
+          type: object
+          properties:
+            reference: { type: string, description: The invoice number }
+            methods:
+              type: array
+              items: { $ref: "#/components/schemas/PaymentMethod" }
+
+    ExerciseCategory:
+      type: string
+      description: Movement pattern, not muscle — how a coach checks a session
+        is balanced.
+      enum: [squat, hinge, lunge, horizontal_push, vertical_push,
+             horizontal_pull, vertical_pull, carry, core, olympic,
+             conditioning, mobility, other]
+
+    Exercise:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        category: { $ref: "#/components/schemas/ExerciseCategory" }
+        primary_muscle: { type: string }
+        equipment: { type: string }
+        instructions: { type: string }
+        video_url:
+          type: string
+          description: YouTube or Vimeo only — allowlisted, not format-checked.
+        is_custom: { type: boolean }
+
+    Program:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        is_template: { type: boolean }
+        total_weeks: { type: integer }
+        blocks:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              weeks:
+                type: integer
+                description: |
+                  The block's days repeat for this many weeks rather than being
+                  stored once per week, so editing week one edits the block.
+              days:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    name: { type: string }
+                    prescriptions:
+                      type: array
+                      items: { $ref: "#/components/schemas/Prescription" }
+
+    Prescription:
+      type: object
+      description: What the trainer asked for. What the client did is a SetLog.
+      properties:
+        id: { type: string, format: uuid }
+        exercise_id: { type: string, format: uuid }
+        exercise_name: { type: string }
+        target_sets: { type: integer }
+        target_reps_min: { type: integer, nullable: true }
+        target_reps_max: { type: integer, nullable: true }
+        target_load_grams: { type: integer, nullable: true }
+        target_rpe_tenths:
+          type: integer
+          nullable: true
+          description: Tenths — 85 is RPE 8.5.
+        target_rir: { type: integer, nullable: true }
+        rest_seconds: { type: integer, nullable: true }
+        tempo: { type: string, examples: ["3-1-1-0"] }
+        superset_group: { type: string }
+        notes: { type: string }
+
+    Workout:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        day_id: { type: string, format: uuid, nullable: true }
+        day_name: { type: string }
+        session_id: { type: string, format: uuid, nullable: true }
+        week_number: { type: integer }
+        performed_on: { type: string, format: date }
+        status: { type: string, enum: [in_progress, completed, skipped] }
+        notes: { type: string }
+        sets:
+          type: array
+          items: { $ref: "#/components/schemas/SetLog" }
+        server_seq: { type: integer, format: int64 }
+
+    SetLog:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        exercise_id: { type: string, format: uuid }
+        exercise_name: { type: string }
+        set_index: { type: integer, minimum: 1 }
+        reps: { type: integer, nullable: true }
+        load_grams: { type: integer, nullable: true, description: Grams — never rounds }
+        rpe_tenths: { type: integer, nullable: true }
+        rir: { type: integer, nullable: true }
+        rest_seconds: { type: integer, nullable: true }
+        tempo: { type: string }
+        is_warmup:
+          type: boolean
+          description: Excluded from progression, so a warm-up cannot read as a PB.
+        completed: { type: boolean }
+        notes: { type: string }
+        form_check_media_id: { type: string, format: uuid, nullable: true }
+
+    SetLogInput:
+      type: object
+      required: [exercise_id, set_index]
+      properties:
+        exercise_id: { type: string, format: uuid }
+        program_exercise_id: { type: string, format: uuid, nullable: true }
+        set_index: { type: integer, minimum: 1 }
+        reps: { type: integer, nullable: true }
+        load_grams: { type: integer, nullable: true }
+        rpe_tenths: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+        rir: { type: integer, nullable: true, minimum: 0, maximum: 10 }
+        rest_seconds: { type: integer, nullable: true }
+        tempo: { type: string }
+        is_warmup: { type: boolean }
+        completed: { type: boolean, default: true }
+        notes: { type: string }
+        form_check_media_id: { type: string, format: uuid, nullable: true }
+
+    VolumePoint:
+      type: object
+      properties:
+        performed_on: { type: string, format: date }
+        volume_gram_reps:
+          type: integer
+          format: int64
+          description: Load times reps over working sets — the number coaches
+            watch for progression.
+        top_set_grams: { type: integer, nullable: true }
+        working_sets: { type: integer }

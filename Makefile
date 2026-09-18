@@ -81,3 +81,14 @@ app-install: ## Install Expo client dependencies
 
 app-start: ## Start the Expo client
 	cd app && npx expo start
+
+app-typecheck: ## Typecheck the Expo client
+	cd app && npx tsc --noEmit
+
+app-test: ## Run the Expo client's tests
+	cd app && npx jest
+
+app-bundle: ## Bundle every route — catches imports typecheck cannot
+	cd app && npx expo export --platform web --output-dir dist
+
+app-verify: app-typecheck app-test app-bundle ## Everything CI runs for the client
