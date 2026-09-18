@@ -132,7 +132,7 @@ type jsonMoney struct {
 
 // MarshalJSON emits minor units, never a float, so clients cannot lose precision.
 func (m Money) MarshalJSON() ([]byte, error) {
-	return json.Marshal(jsonMoney{Minor: m.Minor, Currency: m.Currency})
+	return json.Marshal(jsonMoney(m))
 }
 
 // UnmarshalJSON parses the minor-unit representation.

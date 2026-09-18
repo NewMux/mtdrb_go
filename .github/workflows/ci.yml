@@ -89,7 +89,9 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
           TEST_APP_DATABASE_URL: postgres://coachpulse_app:coachpulse_app@localhost:5432/coachpulse?sslmode=disable
-        run: go test -race -count=1 -tags=integration ./...
+        # -p 1: integration packages share one database and reset it
+        # between tests, so they must not run concurrently.
+        run: go test -race -count=1 -p 1 -tags=integration ./...
 
   sqlc:
     name: Generated code is in sync

@@ -54,10 +54,13 @@ worker: ## Start the recurring-jobs worker
 test: ## Run unit tests
 	$(GO) test -race ./...
 
+# -p 1 is required, not incidental: integration packages share one database
+# and reset it between tests, so running them concurrently lets one package's
+# TRUNCATE land in the middle of another's assertions.
 test-integration: ## Run tests that require Postgres (RLS, ledger, journeys)
 	TEST_DATABASE_URL="$(OWNER_DATABASE_URL)" \
 	TEST_APP_DATABASE_URL="$(APP_DATABASE_URL)" \
-	$(GO) test -race -tags=integration ./...
+	$(GO) test -race -p 1 -tags=integration ./...
 
 fmt: ## Format all Go sources
 	gofmt -w ./cmd ./internal

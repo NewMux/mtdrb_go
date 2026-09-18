@@ -29,6 +29,8 @@ const (
 
 // Stable machine codes. These are part of the client contract: the Expo app
 // and the sync outbox branch on them, so they must not be renamed casually.
+//
+// #nosec G101 -- these are error identifiers returned to clients, not credentials.
 const (
 	CodeValidation          = "validation_failed"
 	CodeInvalidCredentials  = "invalid_credentials"
