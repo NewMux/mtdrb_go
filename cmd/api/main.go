@@ -87,6 +87,7 @@ func run() error {
 		CRM:         crm.NewHandler(crmSvc, pool),
 		Media:       media.NewHandler(mediaSvc, pool),
 		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
+		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
 		TokenIssuer: issuer,
 	})
 

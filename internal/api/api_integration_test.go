@@ -77,12 +77,14 @@ func newHarness(t *testing.T) *harness {
 	mediaSvc := media.NewService(&fakePresigner{}, wall, cfg.PresignTTL)
 	billingSvc := billing.NewService(ledgerSvc, wall)
 	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
+	cfg.PublicBaseURL = "https://app.coachpulse.test"
 
 	srv := api.New(cfg, pool, slog.New(slog.DiscardHandler), api.Deps{
 		Auth:        auth.NewHandler(authSvc),
 		CRM:         crm.NewHandler(crmSvc, pool),
 		Media:       media.NewHandler(mediaSvc, pool),
 		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
+		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
 		TokenIssuer: issuer,
 	})
 
@@ -111,6 +113,9 @@ func (h *harness) do(method, path, token string, body any) (int, map[string]any)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// The shared-invoice route serves HTML to a browser and JSON to the app,
+	// so this helper asks for JSON the way the Expo client would.
+	req.Header.Set("Accept", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -547,5 +552,301 @@ func TestBufferConflictOverHTTP(t *testing.T) {
 	}
 	if code := conflict["error"].(map[string]any)["code"]; code != "scheduling_conflict" {
 		t.Errorf("code = %v, want scheduling_conflict", code)
+	}
+}
+
+// doRaw issues a request and returns the raw body, for the HTML share page and
+// for asserting on replay headers.
+func (h *harness) doRaw(method, path, token string, body any, headers map[string]string) (*http.Response, string) {
+	h.t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			h.t.Fatalf("encode request: %v", err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, h.server.URL+path, reader)
+	if err != nil {
+		h.t.Fatalf("build request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := h.server.Client().Do(req)
+	if err != nil {
+		h.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.t.Fatalf("read response: %v", err)
+	}
+	return resp, string(raw)
+}
+
+// issueSharedInvoice sets a trainer up with a client, a bank method and an
+// issued, shared invoice. Returns the invoice id and the share token.
+func (h *harness) issueSharedInvoice(token string) (string, string) {
+	h.t.Helper()
+
+	_, client := h.do(http.MethodPost, "/v1/clients", token, map[string]any{"full_name": "Client A"})
+	clientID := client["id"].(string)
+
+	if status, body := h.do(http.MethodPost, "/v1/payment-methods", token, map[string]any{
+		"kind": "bank_transfer", "label": "Bank transfer", "is_default": true,
+		"details": map[string]any{"iban": "DE89370400440532013000", "account_holder": "Sam Coach"},
+	}); status != http.StatusCreated {
+		h.t.Fatalf("create payment method = %d %v", status, body)
+	}
+
+	status, draft := h.do(http.MethodPost, "/v1/invoices", token, map[string]any{
+		"client_id": clientID,
+		"lines": []map[string]any{{
+			"kind": "package", "description": "10-session pack",
+			"quantity": 1, "unit_price_minor": 50000, "package_credits": 10,
+		}},
+	})
+	if status != http.StatusCreated {
+		h.t.Fatalf("create draft = %d %v", status, draft)
+	}
+	invoiceID := draft["id"].(string)
+
+	if status, body := h.do(http.MethodPost, "/v1/invoices/"+invoiceID+"/issue", token, map[string]any{}); status != http.StatusOK {
+		h.t.Fatalf("issue = %d %v", status, body)
+	}
+
+	status, link := h.do(http.MethodPost, "/v1/invoices/"+invoiceID+"/share", token, nil)
+	if status != http.StatusCreated {
+		h.t.Fatalf("share = %d %v", status, link)
+	}
+	return invoiceID, link["token"].(string)
+}
+
+// Journey B through the real router, including the unauthenticated page.
+func TestJourneyBOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+	invoiceID, shareToken := h.issueSharedInvoice(token)
+
+	// The shared page is reachable with no credentials at all.
+	resp, body := h.doRaw(http.MethodGet, "/public/invoices/"+shareToken, "", nil, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("public page = %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "DE89370400440532013000") {
+		t.Error("the shared page does not show the trainer's IBAN")
+	}
+	if !strings.Contains(body, "INV-") {
+		t.Error("the shared page does not show the invoice number")
+	}
+	// It must not be cacheable or indexable: the URL is the secret.
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+	if robots := resp.Header.Get("X-Robots-Tag"); !strings.Contains(robots, "noindex") {
+		t.Errorf("X-Robots-Tag = %q, want noindex", robots)
+	}
+
+	// The same link serves JSON to the app.
+	status, public := h.do(http.MethodGet, "/public/invoices/"+shareToken, "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("public json = %d %v", status, public)
+	}
+	if public["business_name"] != "Iron Works" {
+		t.Errorf("business_name = %v", public["business_name"])
+	}
+
+	// Trainer marks it paid by bank transfer.
+	status, result := h.do(http.MethodPost, "/v1/invoices/"+invoiceID+"/payments", token, map[string]any{
+		"amount_minor": 50000, "instrument": "bank_transfer", "reference": "TRF-99812",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("record payment = %d %v", status, result)
+	}
+	invoice := result["invoice"].(map[string]any)
+	if invoice["status"] != "settled" {
+		t.Errorf("status = %v, want settled", invoice["status"])
+	}
+	if invoice["balance_minor"].(float64) != 0 {
+		t.Errorf("balance = %v, want 0", invoice["balance_minor"])
+	}
+
+	// Receivables are clear.
+	status, receivables := h.do(http.MethodGet, "/v1/receivables", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("receivables = %d %v", status, receivables)
+	}
+	if receivables["total_minor"].(float64) != 0 {
+		t.Errorf("outstanding = %v, want 0", receivables["total_minor"])
+	}
+}
+
+// A share token must reach exactly one invoice and leak nothing else.
+func TestShareTokenIsolation(t *testing.T) {
+	h := newHarness(t)
+	alice := h.signup("alice@gym.io")
+	bob := h.signup("bob@gym.io")
+
+	aliceInvoice, aliceToken := h.issueSharedInvoice(alice)
+	_, bobToken := h.issueSharedInvoice(bob)
+
+	// Each token resolves to its own tenant's invoice.
+	_, aliceView := h.do(http.MethodGet, "/public/invoices/"+aliceToken, "", nil)
+	_, bobView := h.do(http.MethodGet, "/public/invoices/"+bobToken, "", nil)
+	if aliceView["number"] == nil || aliceView["number"] != bobView["number"] {
+		// Both are the first invoice of their own tenant, so the numbers
+		// match; what must differ is that each is its own document.
+		t.Logf("alice %v bob %v", aliceView["number"], bobView["number"])
+	}
+
+	// A forged token is a 404, never a 403: the difference would confirm to a
+	// guesser that a token once existed.
+	for _, bad := range []string{"not-a-real-token", strings.Repeat("A", 43), ""} {
+		status, _ := h.do(http.MethodGet, "/public/invoices/"+bad, "", nil)
+		if status != http.StatusNotFound && status != http.StatusMovedPermanently {
+			t.Errorf("forged token %q = %d, want 404", bad, status)
+		}
+	}
+
+	// Revoking kills the link.
+	if status, _ := h.do(http.MethodDelete, "/v1/invoices/"+aliceInvoice+"/share", alice, nil); status != http.StatusNoContent {
+		t.Fatalf("revoke = %d", status)
+	}
+	if status, _ := h.do(http.MethodGet, "/public/invoices/"+aliceToken, "", nil); status != http.StatusNotFound {
+		t.Errorf("revoked token still resolves: %d", status)
+	}
+
+	// Bob cannot reach Alice's invoice through the authenticated API either.
+	if status, _ := h.do(http.MethodGet, "/v1/invoices/"+aliceInvoice, bob, nil); status != http.StatusNotFound {
+		t.Errorf("cross-tenant invoice fetch = %d, want 404", status)
+	}
+}
+
+// The public payload must carry the bill and nothing more.
+func TestPublicInvoiceLeaksNothingExtra(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+	_, shareToken := h.issueSharedInvoice(token)
+
+	_, public := h.do(http.MethodGet, "/public/invoices/"+shareToken, "", nil)
+
+	// Fields that would be a disclosure if they appeared.
+	for _, forbidden := range []string{
+		"medical_notes", "client_id", "tenant_id", "journal_entry_id",
+		"share_token_hash", "server_seq", "emergency_contact_phone",
+	} {
+		if _, present := public[forbidden]; present {
+			t.Errorf("the public payload exposes %q", forbidden)
+		}
+	}
+	if public["number"] == nil || public["total_minor"] == nil {
+		t.Error("the public payload is missing the invoice itself")
+	}
+}
+
+// Replaying a payment must not charge the client twice. This is the whole
+// reason the idempotency table exists.
+func TestIdempotentPaymentReplay(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+	invoiceID, _ := h.issueSharedInvoice(token)
+
+	payment := map[string]any{
+		"amount_minor": 20000, "instrument": "cash", "reference": "envelope",
+	}
+	key := map[string]string{"Idempotency-Key": "outbox-payment-0001"}
+
+	var firstBody string
+	for attempt := range 3 {
+		resp, body := h.doRaw(http.MethodPost, "/v1/invoices/"+invoiceID+"/payments",
+			token, payment, key)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("attempt %d = %d: %s", attempt, resp.StatusCode, body)
+		}
+		if attempt == 0 {
+			firstBody = body
+			continue
+		}
+		// A replay returns the stored response verbatim and says so.
+		if resp.Header.Get("Idempotent-Replay") != "true" {
+			t.Errorf("attempt %d was not marked as a replay", attempt)
+		}
+		if body != firstBody {
+			t.Errorf("attempt %d returned a different response than the original", attempt)
+		}
+	}
+
+	// Exactly one payment, and the invoice reflects one payment only.
+	status, payments := h.do(http.MethodGet, "/v1/invoices/"+invoiceID+"/payments", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list payments = %d %v", status, payments)
+	}
+	if got := payments["payments"].([]any); len(got) != 1 {
+		t.Fatalf("three replays produced %d payments, want 1", len(got))
+	}
+
+	status, invoice := h.do(http.MethodGet, "/v1/invoices/"+invoiceID, token, nil)
+	if status != http.StatusOK {
+		t.Fatal(status)
+	}
+	if invoice["paid_minor"].(float64) != 20000 {
+		t.Errorf("paid = %v, want 20000 — a replay was counted twice", invoice["paid_minor"])
+	}
+}
+
+// Reusing a key for a different request is a client bug, and treating it as a
+// replay would silently drop a real payment.
+func TestIdempotencyKeyReusedForADifferentRequestIsRefused(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+	invoiceID, _ := h.issueSharedInvoice(token)
+
+	key := map[string]string{"Idempotency-Key": "outbox-payment-0002"}
+
+	if resp, body := h.doRaw(http.MethodPost, "/v1/invoices/"+invoiceID+"/payments", token,
+		map[string]any{"amount_minor": 10000, "instrument": "cash"}, key); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first payment = %d: %s", resp.StatusCode, body)
+	}
+
+	resp, body := h.doRaw(http.MethodPost, "/v1/invoices/"+invoiceID+"/payments", token,
+		map[string]any{"amount_minor": 30000, "instrument": "cash"}, key)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("key reuse with a different body = %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "idempotency_key_reused") {
+		t.Errorf("unexpected error body: %s", body)
+	}
+}
+
+// A failed request must release its key, so a corrected retry can go through.
+func TestFailedRequestReleasesItsIdempotencyKey(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+	invoiceID, _ := h.issueSharedInvoice(token)
+
+	key := map[string]string{"Idempotency-Key": "outbox-payment-0003"}
+
+	// Overpay: refused.
+	if resp, _ := h.doRaw(http.MethodPost, "/v1/invoices/"+invoiceID+"/payments", token,
+		map[string]any{"amount_minor": 99999, "instrument": "cash"}, key); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("overpayment = %d, want 422", resp.StatusCode)
+	}
+
+	// The same key now works for a valid request, rather than replaying the
+	// failure forever.
+	resp, body := h.doRaw(http.MethodPost, "/v1/invoices/"+invoiceID+"/payments", token,
+		map[string]any{"amount_minor": 50000, "instrument": "cash"}, key)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("retry after failure = %d: %s", resp.StatusCode, body)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/NewMux/mtdrb_go/internal/auth"
+	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/db"
@@ -32,6 +33,7 @@ type Deps struct {
 	CRM        *crm.Handler
 	Media      *media.Handler
 	Scheduling *scheduling.Handler
+	Billing    *billing.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
 }
@@ -61,6 +63,12 @@ func (s *Server) routes(deps Deps) chi.Router {
 	r.Get("/healthz", s.healthz)
 	r.Get("/readyz", s.readyz)
 
+	// Shared invoice links. Mounted outside /v1 and outside authentication
+	// entirely: the whole point is that a client with no account can open the
+	// link their trainer sent them. Access is controlled by the unguessable
+	// token, and the payload is deliberately narrow.
+	r.Mount("/public", deps.Billing.PublicRoutes())
+
 	r.Route("/v1", func(v1 chi.Router) {
 		// Unauthenticated: obtaining credentials in the first place.
 		v1.Mount("/auth", deps.Auth.Routes())
@@ -85,6 +93,15 @@ func (s *Server) routes(deps Deps) chi.Router {
 				trainer.Mount("/waivers", deps.CRM.WaiverRoutes())
 				trainer.Mount("/sessions", deps.Scheduling.Routes())
 				trainer.Mount("/credits", deps.Scheduling.CreditRoutes())
+
+				// Money endpoints carry idempotency, so the offline outbox
+				// can retry a payment without recording it twice.
+				trainer.Group(func(m chi.Router) {
+					m.Use(httpx.Idempotent(s.pool))
+					m.Mount("/invoices", deps.Billing.InvoiceRoutes())
+				})
+				trainer.Mount("/payment-methods", deps.Billing.PaymentMethodRoutes())
+				trainer.Mount("/receivables", deps.Billing.ReceivablesRoutes())
 			})
 		})
 	})
