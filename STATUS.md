@@ -7,8 +7,8 @@ to end, asserted through the real HTTP router against real Postgres.
 
 | | |
 |---|---|
-| Milestones done | 7 of 8 (M0–M6) |
-| Tests | 173, green under `-race` |
+| Milestones done | 7 of 8, plus M7's server side |
+| Tests | 185, green under `-race` |
 | Production Go | ~12,700 lines |
 | Test Go | ~7,400 lines |
 | Migrations | 7, each verified to roll back and reapply |
@@ -109,7 +109,7 @@ available.
 Prescription and performance are kept as **separate facts** — collapsing them
 would destroy the one thing progression tracking exists to show.
 
-Sixty-eight exercises seeded per tenant at signup, organised by movement
+Sixty-six exercises seeded per tenant at signup, organised by movement
 pattern rather than muscle, because that is how a coach checks a session is
 balanced. Mesocycles hold blocks hold days hold prescriptions; a four-week
 block repeats its days rather than storing twenty-eight copies.
@@ -123,6 +123,29 @@ Gym-floor behaviour:
   performed would put lifts in a client's history that never happened.
 - Cloning skips warm-ups; progression counts working sets only, so a deload
   cannot read as a personal best.
+
+### M7 (in progress) — Sync engine, server side
+
+Pull mirrors rows into local SQLite; **push carries operations, not rows.**
+
+That asymmetry is the load-bearing decision. A generic row upsert would be far
+less code — the client sends an attendance row with status `completed`, the
+server writes it — and it would be wrong. Marking attendance burns a credit and
+posts revenue; writing the row directly does neither, so the calendar would say
+the session happened while the books said nothing was earned. So the outbox
+replays *intents*, each dispatching to the same service the online path uses.
+There is no route around the rules.
+
+Covered by a test that drains a morning of offline work — attendance, a
+workout, cash in an envelope, a measurement — and then asserts the credit
+burned, the revenue posted, the invoice settled and the trial balance still
+balances.
+
+Per-collection cursors behind an opaque token. A conflict is reported per
+operation with the request still `200`, because a blanket failure would have
+the outbox retry the eleven operations that succeeded.
+
+The Expo app itself is not built.
 
 ---
 
@@ -138,6 +161,7 @@ Worth recording, because each was a real defect in shipped-looking code:
 | M4 | Overdraft could not draw against an exhausted pack, so the first overdrawn session was wrongly refused |
 | M4 | An overdrawn balance displayed `0` instead of `−1`, hiding the debt |
 | M5 | Idempotent replays stored as `jsonb` came back with keys reordered, so a replay was not byte-identical |
+| M7 | A single global sync cursor advanced past rows in other collections — data would have **silently never synced** |
 
 Two design self-corrections mid-build: `MarkDay` originally skipped
 out-of-credit clients silently (a trainer would believe it worked); the credit
@@ -148,23 +172,23 @@ replaced by a plan/apply split so the journal link is written at insert.
 
 ## What should be done next
 
-### 1. M7 — Expo client *(the only Phase 1 item left)*
+### 1. M7 — the Expo app itself *(the only Phase 1 item left)*
 
-The backend is complete and unused. Everything below it is lower priority than
-having something a trainer can hold.
+The server side of sync is **done** (`internal/sync/`): pull, push, opaque
+per-collection cursors, and an operation vocabulary covering the PRD's offline
+set — attendance, workouts, cash payments, clients, biometrics. What remains is
+the client:
 
 - `expo-sqlite` + Drizzle mirroring the server schema
-- Outbox sync engine against `POST /sync/push` and `GET /sync/pull`
-- Generated API client from `api/openapi.yaml`
-- Trainer screens for M3–M6; desktop web layouts for the programme builder
-  and financial reporting
+- An outbox that queues operations and drains them through `POST /v1/sync/push`
+- Pull loop against `GET /v1/sync/pull?cursor=…`, storing the opaque cursor
+- Generated API client from `api/openapi.yaml` — **still a skeleton**, and the
+  generated client depends on it
+- Trainer screens for M3–M6; desktop web layouts for the programme builder and
+  financial reporting
 
-**The server side of sync does not exist yet.** `internal/sync/` is an empty
-directory. Every table already carries `server_seq`, `updated_at`, soft
-deletes and client-minted UUIDv7 ids, so the design ([ADR
-0004](docs/adr/0004-offline-sync-conflict-policy.md)) is ready — but the pull
-and push endpoints are still to write. That is the first task of M7, not the
-last.
+The backend is complete and unused. Nothing below this is more valuable than
+having something a trainer can hold.
 
 ### 2. M5.5 — Jobs and the worker
 

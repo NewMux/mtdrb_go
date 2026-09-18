@@ -25,6 +25,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
+	"github.com/NewMux/mtdrb_go/internal/sync"
 	"github.com/NewMux/mtdrb_go/internal/testsupport"
 )
 
@@ -88,6 +89,12 @@ func newHarness(t *testing.T) *harness {
 		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
 		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
 		Programming: programming.NewHandler(programmingSvc, pool),
+		Sync: sync.NewHandler(sync.NewService(wall), pool, sync.Dependencies{
+			CRM:         crmSvc,
+			Scheduling:  schedulingSvc,
+			Billing:     billingSvc,
+			Programming: programmingSvc,
+		}),
 		TokenIssuer: issuer,
 	})
 
@@ -994,6 +1001,150 @@ func TestProgrammingIsTenantIsolatedOverHTTP(t *testing.T) {
 	for _, e := range bobLib["exercises"].([]any) {
 		if aliceIDs[e.(map[string]any)["id"].(string)] {
 			t.Fatal("two tenants share an exercise row")
+		}
+	}
+}
+
+// The round trip an Expo client actually performs: pull state, go offline,
+// queue work, come back and push it.
+func TestSyncRoundTripOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+
+	// First pull: the seeded library arrives and a cursor comes back.
+	status, pulled := h.do(http.MethodGet, "/v1/sync/pull", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("pull = %d %v", status, pulled)
+	}
+	cursor, _ := pulled["cursor"].(string)
+	if cursor == "" {
+		t.Fatal("the first pull returned no cursor")
+	}
+	gotExercises := false
+	for _, c := range pulled["changes"].([]any) {
+		if c.(map[string]any)["collection"] == "exercises" {
+			gotExercises = true
+		}
+	}
+	if !gotExercises {
+		t.Error("the seeded library did not arrive in the first pull")
+	}
+
+	// Offline: the device queues a new client and a measurement.
+	status, pushed := h.do(http.MethodPost, "/v1/sync/push", token, map[string]any{
+		"operations": []map[string]any{
+			{
+				"id":        "01234567-89ab-7cde-8f01-23456789abcd",
+				"type":      "client.create",
+				"queued_at": "2026-05-01T09:00:00Z",
+				"data":      map[string]any{"full_name": "Dana Rivers"},
+			},
+		},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("push = %d %v", status, pushed)
+	}
+	if pushed["applied"].(float64) != 1 {
+		t.Fatalf("applied %v of 1: %v", pushed["applied"], pushed["results"])
+	}
+
+	// Pulling from the cursor returns the device's own write and nothing it
+	// already has.
+	status, delta := h.do(http.MethodGet, "/v1/sync/pull?cursor="+cursor, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("incremental pull = %d %v", status, delta)
+	}
+	clients := 0
+	exercises := 0
+	for _, c := range delta["changes"].([]any) {
+		entry := c.(map[string]any)
+		switch entry["collection"] {
+		case "clients":
+			clients = len(entry["rows"].([]any))
+		case "exercises":
+			exercises = len(entry["rows"].([]any))
+		}
+	}
+	if clients != 1 {
+		t.Errorf("incremental pull returned %d clients, want 1", clients)
+	}
+	if exercises != 0 {
+		t.Errorf("incremental pull re-sent %d exercises the device already had", exercises)
+	}
+}
+
+// A conflict inside a batch is reported per operation, not as a failed request
+// — otherwise the outbox would retry the operations that succeeded.
+func TestSyncPushReportsConflictsWithoutFailingTheBatch(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+
+	status, pushed := h.do(http.MethodPost, "/v1/sync/push", token, map[string]any{
+		"operations": []map[string]any{
+			{
+				"id":        "01234567-89ab-7cde-8f01-23456789ab01",
+				"type":      "client.create",
+				"queued_at": "2026-05-01T09:00:00Z",
+				"data":      map[string]any{"full_name": "Valid Client"},
+			},
+			{
+				"id":        "01234567-89ab-7cde-8f01-23456789ab02",
+				"type":      "client.create",
+				"queued_at": "2026-05-01T09:01:00Z",
+				"data":      map[string]any{"full_name": ""}, // invalid
+			},
+		},
+	})
+	// The batch was processed, so the request succeeded.
+	if status != http.StatusOK {
+		t.Fatalf("push = %d %v", status, pushed)
+	}
+	if pushed["applied"].(float64) != 1 {
+		t.Errorf("applied = %v, want 1", pushed["applied"])
+	}
+	if pushed["rejected"].(float64) != 1 {
+		t.Errorf("rejected = %v, want 1", pushed["rejected"])
+	}
+
+	// Each operation carries its own outcome, keyed by the id the device
+	// minted, so the outbox knows exactly which entry to drop.
+	results := pushed["results"].([]any)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	for _, raw := range results {
+		entry := raw.(map[string]any)
+		if entry["id"] == nil || entry["status"] == nil {
+			t.Errorf("result is missing its id or status: %v", entry)
+		}
+	}
+}
+
+// One trainer's device must never pull another's rows.
+func TestSyncIsTenantIsolatedOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	alice := h.signup("alice@gym.io")
+	bob := h.signup("bob@gym.io")
+
+	if status, body := h.do(http.MethodPost, "/v1/clients", alice, map[string]any{
+		"full_name": "Alice's Client",
+	}); status != http.StatusCreated {
+		t.Fatalf("create = %d %v", status, body)
+	}
+
+	status, pulled := h.do(http.MethodGet, "/v1/sync/pull", bob, nil)
+	if status != http.StatusOK {
+		t.Fatalf("pull = %d %v", status, pulled)
+	}
+	for _, c := range pulled["changes"].([]any) {
+		entry := c.(map[string]any)
+		if entry["collection"] != "clients" {
+			continue
+		}
+		for _, row := range entry["rows"].([]any) {
+			if row.(map[string]any)["full_name"] == "Alice's Client" {
+				t.Fatal("Bob's device pulled Alice's client")
+			}
 		}
 	}
 }

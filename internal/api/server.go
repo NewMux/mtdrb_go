@@ -18,6 +18,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
+	"github.com/NewMux/mtdrb_go/internal/sync"
 )
 
 // Server is the assembled HTTP application.
@@ -36,6 +37,7 @@ type Deps struct {
 	Scheduling  *scheduling.Handler
 	Billing     *billing.Handler
 	Programming *programming.Handler
+	Sync        *sync.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
 }
@@ -113,6 +115,7 @@ func (s *Server) routes(deps Deps) chi.Router {
 			private.Group(func(shared chi.Router) {
 				shared.Mount("/exercises", deps.Programming.ExerciseRoutes())
 				shared.Mount("/workouts", deps.Programming.WorkoutRoutes())
+				shared.Mount("/sync", deps.Sync.Routes())
 			})
 		})
 	})

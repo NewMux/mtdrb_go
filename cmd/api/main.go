@@ -20,6 +20,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
 	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
+	"github.com/NewMux/mtdrb_go/internal/sync"
 )
 
 func main() {
@@ -91,6 +92,12 @@ func run() error {
 		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
 		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
 		Programming: programming.NewHandler(programmingSvc, pool),
+		Sync: sync.NewHandler(sync.NewService(wall), pool, sync.Dependencies{
+			CRM:         crmSvc,
+			Scheduling:  schedulingSvc,
+			Billing:     billingSvc,
+			Programming: programmingSvc,
+		}),
 		TokenIssuer: issuer,
 	})
 
