@@ -10,6 +10,7 @@ import (
 
 	"github.com/NewMux/mtdrb_go/internal/api"
 	"github.com/NewMux/mtdrb_go/internal/auth"
+	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/db"
@@ -17,6 +18,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
+	"github.com/NewMux/mtdrb_go/internal/scheduling"
 )
 
 func main() {
@@ -77,11 +79,14 @@ func run() error {
 
 	crmSvc := crm.NewService(wall, cfg.ColumnEncryptionKey)
 	mediaSvc := media.NewService(presigner, wall, cfg.PresignTTL)
+	billingSvc := billing.NewService(ledgerSvc, wall)
+	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
 
 	srv := api.New(cfg, pool, log, api.Deps{
 		Auth:        auth.NewHandler(authSvc),
 		CRM:         crm.NewHandler(crmSvc, pool),
 		Media:       media.NewHandler(mediaSvc, pool),
+		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
 		TokenIssuer: issuer,
 	})
 

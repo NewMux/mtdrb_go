@@ -213,3 +213,11 @@ func IsRLSViolation(err error) bool {
 
 // IsNoRows reports whether a query returned nothing.
 func IsNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+
+// IsSQLState reports whether err is a Postgres error with the given SQLSTATE.
+// Used for codes without a dedicated helper, such as 23P01 (exclusion
+// constraint violation).
+func IsSQLState(err error, code string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == code
+}

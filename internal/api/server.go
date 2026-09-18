@@ -15,6 +15,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
 	"github.com/NewMux/mtdrb_go/internal/media"
+	"github.com/NewMux/mtdrb_go/internal/scheduling"
 )
 
 // Server is the assembled HTTP application.
@@ -27,9 +28,10 @@ type Server struct {
 
 // Deps are the collaborators the router mounts.
 type Deps struct {
-	Auth  *auth.Handler
-	CRM   *crm.Handler
-	Media *media.Handler
+	Auth       *auth.Handler
+	CRM        *crm.Handler
+	Media      *media.Handler
+	Scheduling *scheduling.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
 }
@@ -81,6 +83,8 @@ func (s *Server) routes(deps Deps) chi.Router {
 				trainer.Use(httpx.RequireTrainer)
 				trainer.Mount("/clients", deps.CRM.Routes())
 				trainer.Mount("/waivers", deps.CRM.WaiverRoutes())
+				trainer.Mount("/sessions", deps.Scheduling.Routes())
+				trainer.Mount("/credits", deps.Scheduling.CreditRoutes())
 			})
 		})
 	})

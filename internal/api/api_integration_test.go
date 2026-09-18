@@ -17,11 +17,13 @@ import (
 
 	"github.com/NewMux/mtdrb_go/internal/api"
 	"github.com/NewMux/mtdrb_go/internal/auth"
+	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
+	"github.com/NewMux/mtdrb_go/internal/scheduling"
 	"github.com/NewMux/mtdrb_go/internal/testsupport"
 )
 
@@ -73,11 +75,14 @@ func newHarness(t *testing.T) *harness {
 	authSvc := auth.NewService(pool, issuer, ledgerSvc, wall, params)
 	crmSvc := crm.NewService(wall, []byte(strings.Repeat("c", 32)))
 	mediaSvc := media.NewService(&fakePresigner{}, wall, cfg.PresignTTL)
+	billingSvc := billing.NewService(ledgerSvc, wall)
+	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
 
 	srv := api.New(cfg, pool, slog.New(slog.DiscardHandler), api.Deps{
 		Auth:        auth.NewHandler(authSvc),
 		CRM:         crm.NewHandler(crmSvc, pool),
 		Media:       media.NewHandler(mediaSvc, pool),
+		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
 		TokenIssuer: issuer,
 	})
 
@@ -411,5 +416,136 @@ func TestUnknownRouteReturnsJSON(t *testing.T) {
 	}
 	if body["error"] == nil {
 		t.Errorf("body = %v, want a JSON error envelope", body)
+	}
+}
+
+// Journey A end to end through the real router, as the Expo client will drive
+// it: book a session, mark it complete, and read back the zero balance that
+// triggers the renewal prompt.
+func TestJourneyAOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+
+	_, client := h.do(http.MethodPost, "/v1/clients", token, map[string]any{
+		"full_name": "Client A",
+	})
+	clientID := client["id"].(string)
+
+	status, sessionType := h.do(http.MethodPost, "/v1/sessions/session-types", token, map[string]any{
+		"name": "1-on-1", "duration_minutes": 60, "capacity": 1, "credit_cost": 1,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create session type = %d %v", status, sessionType)
+	}
+	typeID := sessionType["id"].(string)
+
+	// A single credit, priced at 50.00.
+	status, pkg := h.do(http.MethodPost, "/v1/credits/packages", token, map[string]any{
+		"client_id": clientID, "name": "starter", "credits": 1, "unit_price_minor": 5000,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("grant package = %d %v", status, pkg)
+	}
+
+	start := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Hour)
+	status, session := h.do(http.MethodPost, "/v1/sessions", token, map[string]any{
+		"session_type_id": typeID,
+		"starts_at":       start.Format(time.RFC3339),
+		"client_ids":      []string{clientID},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("book = %d %v", status, session)
+	}
+	attendees := session["attendees"].([]any)
+	if len(attendees) != 1 {
+		t.Fatalf("roster has %d attendees", len(attendees))
+	}
+	attendeeID := attendees[0].(map[string]any)["id"].(string)
+
+	// Mark it complete: the credit burns and revenue is recognised.
+	status, result := h.do(http.MethodPost, "/v1/sessions/attendees/"+attendeeID+"/mark", token,
+		map[string]any{"status": "completed"})
+	if status != http.StatusOK {
+		t.Fatalf("mark = %d %v", status, result)
+	}
+	if got := result["credits_remaining"].(float64); got != 0 {
+		t.Errorf("credits remaining = %v, want 0", got)
+	}
+	revenue, ok := result["revenue_recognised"].(map[string]any)
+	if !ok {
+		t.Fatalf("no revenue recognised: %v", result)
+	}
+	if revenue["minor"].(float64) != 5000 {
+		t.Errorf("revenue = %v, want 5000", revenue["minor"])
+	}
+
+	// The balance endpoint agrees, which is what the app polls for the prompt.
+	status, balance := h.do(http.MethodGet, "/v1/credits/clients/"+clientID+"/balance", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("balance = %d %v", status, balance)
+	}
+	if got := balance["remaining"].(float64); got != 0 {
+		t.Errorf("balance remaining = %v, want 0", got)
+	}
+
+	// A second session cannot be completed, and the refusal carries what the
+	// client needs to offer a renewal.
+	status, second := h.do(http.MethodPost, "/v1/sessions", token, map[string]any{
+		"session_type_id": typeID,
+		"starts_at":       start.Add(3 * time.Hour).Format(time.RFC3339),
+		"client_ids":      []string{clientID},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("book second = %d %v", status, second)
+	}
+	secondAttendee := second["attendees"].([]any)[0].(map[string]any)["id"].(string)
+
+	status, refusal := h.do(http.MethodPost, "/v1/sessions/attendees/"+secondAttendee+"/mark", token,
+		map[string]any{"status": "completed"})
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("completing without credits = %d %v, want 422", status, refusal)
+	}
+	errBody := refusal["error"].(map[string]any)
+	if errBody["code"] != "insufficient_credits" {
+		t.Errorf("code = %v", errBody["code"])
+	}
+	meta := errBody["meta"].(map[string]any)
+	if meta["remaining"].(float64) != 0 || meta["required"].(float64) != 1 {
+		t.Errorf("meta = %v, want remaining 0 and required 1", meta)
+	}
+}
+
+// The buffer is rejected through the API with a distinguishable code, so the
+// app can tell a double-booking from any other failure.
+func TestBufferConflictOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+
+	_, client := h.do(http.MethodPost, "/v1/clients", token, map[string]any{"full_name": "Client A"})
+	clientID := client["id"].(string)
+	_, sessionType := h.do(http.MethodPost, "/v1/sessions/session-types", token, map[string]any{
+		"name": "1-on-1", "duration_minutes": 60, "capacity": 1, "credit_cost": 1,
+	})
+	typeID := sessionType["id"].(string)
+
+	start := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Hour)
+	if status, body := h.do(http.MethodPost, "/v1/sessions", token, map[string]any{
+		"session_type_id": typeID, "starts_at": start.Format(time.RFC3339),
+		"client_ids": []string{clientID},
+	}); status != http.StatusCreated {
+		t.Fatalf("first booking = %d %v", status, body)
+	}
+
+	// 70 minutes later is inside the default 15-minute buffer.
+	status, conflict := h.do(http.MethodPost, "/v1/sessions", token, map[string]any{
+		"session_type_id": typeID,
+		"starts_at":       start.Add(70 * time.Minute).Format(time.RFC3339),
+		"client_ids":      []string{clientID},
+	})
+	if status != http.StatusConflict {
+		t.Fatalf("overlapping booking = %d %v, want 409", status, conflict)
+	}
+	if code := conflict["error"].(map[string]any)["code"]; code != "scheduling_conflict" {
+		t.Errorf("code = %v, want scheduling_conflict", code)
 	}
 }
