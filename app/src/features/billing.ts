@@ -50,9 +50,15 @@ export async function sellPackage(
     lines: [{
       kind: 'package',
       description: sale.description,
+      // `package_credits` is credits *per unit*, and the server grants
+      // quantity × package_credits. Ten sessions is therefore ten units of one
+      // credit, not ten units of ten — which would grant a hundred and, worse,
+      // set the per-credit price to a tenth of the real one, so each delivered
+      // session recognised a tenth of the revenue and Deferred Revenue never
+      // drained.
       quantity: sale.credits,
       unit_price_minor: sale.unitPriceMinor,
-      package_credits: sale.credits,
+      package_credits: 1,
       credits_expire_on: sale.expiresOn ?? null,
     }],
   }, draftKey);

@@ -1417,7 +1417,12 @@ components:
               package_credits:
                 type: integer
                 nullable: true
-                description: Required on a package line, forbidden on a service line.
+                description: >-
+                  Credits granted per unit; the pack is worth
+                  quantity x package_credits. Ten sessions at 50.00 each is
+                  quantity 10, unit_price_minor 5000, package_credits 1 — not
+                  package_credits 10, which grants a hundred.
+                  Required on a package line, forbidden on a service line.
               credits_expire_on: { type: string, format: date, nullable: true }
 
     PaymentInstrument:

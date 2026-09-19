@@ -25,6 +25,11 @@ recognized when a session is delivered:
 The P&L, receivables ageing and tax export are all derived from the journal, so
 they agree by construction. See [ADR 0001](docs/adr/0001-double-entry-ledger.md).
 
+## Running it
+
+[RUNNING.md](RUNNING.md) — the backend, the app on your phone, and a
+walkthrough of both journeys.
+
 ## Architecture
 
 - **API** — Go 1.24, chi, sqlc, Postgres 16

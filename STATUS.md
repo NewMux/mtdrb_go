@@ -1,16 +1,21 @@
 # CoachPulse — Build Status
 
-**Branch:** `claude/charming-lamport-mlpjxw` · **Last updated:** 2026-09-18
+**Branch:** `claude/charming-lamport-mlpjxw` · **Last updated:** 2026-09-19
 
-**PRD Phase 1 is complete.** Both user journeys work end to end — asserted
-through the real HTTP router against real Postgres on the server, and buildable
-as an app a trainer can hold on the client.
+**PRD Phase 1 is complete**, and — as of this revision — actually verified
+end to end: the client's own sync engine, outbox and API client driven against
+a running server, not against each other's stubs.
+
+That last step mattered. It found four bugs in a system whose two halves each
+had a green test suite. See [the bugs table](#bugs-the-tests-caught).
+
+To run it yourself: [RUNNING.md](RUNNING.md).
 
 | | |
 |---|---|
 | Milestones done | 8 of 8 |
-| Server tests | 185, green under `-race` |
-| Client tests | 72, against real SQLite |
+| Server tests | 186, green under `-race` |
+| Client tests | 72 offline, plus 7 against a live server |
 | Production Go | ~12,700 lines |
 | Test Go | ~7,400 lines |
 | Migrations | 7, each verified to roll back and reapply |
@@ -187,6 +192,19 @@ The local write and the queued operation are one transaction, so a set can
 never exist on the device without an operation to carry it — verified by a test
 that fails the enqueue and asserts the set rolled back with it.
 
+**Offline-minted ids are honoured by the server.** A device with no signal
+queues `workout.start` and the sets logged against it in one batch, all
+referencing the id the device chose. The server keeps that id, because there is
+no way for an outbox to rewrite a queued operation's foreign keys from an
+earlier operation's result — and because a server-minted id would bring the
+same client back from the next pull as a second person. UUIDv7 on both sides is
+what makes this safe to do.
+
+Supplied ids are inserted `ON CONFLICT (id) DO NOTHING` and then re-read under
+RLS, so a retried push converges instead of failing on a primary key, and an id
+belonging to another tenant is refused rather than silently reported as
+created.
+
 ---
 
 ## Bugs the tests caught
@@ -203,6 +221,25 @@ Worth recording, because each was a real defect in shipped-looking code:
 | M5 | Idempotent replays stored as `jsonb` came back with keys reordered, so a replay was not byte-identical |
 | M7 | A single global sync cursor advanced past rows in other collections — data would have **silently never synced** |
 | M7 | `withTransactionAsync` resolves to `void`, so the driver's `transaction()` returned undefined where callers expected a value |
+
+### The four the live run caught
+
+Running the client against a real server for the first time found these. Every
+one had passed both suites, because each side's tests asserted a wire format
+that side had invented — the Go tests marshalled Go values, the TypeScript
+tests asserted the JSON the client happened to send, and neither checked
+`api/openapi.yaml`. Five of six offline operations were refused on the first
+real push.
+
+| Defect | Why it survived until now |
+|---|---|
+| The API published `format: date` but decoded into `time.Time`, which accepts only RFC 3339 — so every date a conforming client sent was rejected | The Go tests passed `time.Time` values, which marshal as timestamps. No test ever sent the format the spec promises |
+| Offline-minted ids were discarded for workouts, clients, sets and measurements, so sets pushed in the same batch referenced a workout the server had never heard of | The integration test pushed **twice**, reading the server's id out of the first response — shaped around the flaw instead of exposing it. A real outbox drains in one batch |
+| Sets came back from a pull under a different id and appeared **twice** on the floor logger, for ever | The server upserts sets on their natural key, so the server was consistent; only the device accumulated the duplicates |
+| Selling a ten-session pack granted **100 credits**, and set revenue recognition to a tenth of the real price — so Deferred Revenue would never drain | `package_credits` is credits *per unit* and multiplies with quantity. The client test asserted the shape the client sent rather than what the server does with it |
+
+The last one is the one that matters most: it corrupts the ledger, quietly,
+which is the single thing this product exists to get right.
 
 Two design self-corrections mid-build: `MarkDay` originally skipped
 out-of-credit clients silently (a trainer would believe it worked); the credit
@@ -229,10 +266,12 @@ leader election, then:
   the media service is covered by API tests using a fake presigner, but Docker
   is unavailable in this sandbox and the MinIO download is proxy-blocked. This
   is the single largest untested surface.
-- **The client has never talked to a live server.** Its unit tests drive the
-  API client against a stubbed fetch and the offline logic against real SQLite,
-  and every route bundles — but nothing has yet run the whole loop against a
-  running API. That is the first thing to do with a machine that can run both.
+- **Responses still send dates as timestamps.** Requests now accept
+  `YYYY-MM-DD` and the sync pull emits it (Postgres `to_jsonb` renders a date
+  column that way), but the REST response structs still hold `time.Time`, so
+  the same column reads back differently depending on the endpoint. Cosmetic —
+  every client parses both — but the spec says one thing and two code paths say
+  another.
 - **PDF invoice export.** Deliberately deferred; the share page is one HTML
   template so PDF renders the same source rather than a second layout
   ([ADR 0006](docs/adr/0006-invoice-pdf-rendering.md)).
@@ -271,10 +310,17 @@ make verify                                # everything CI runs for the server
 make app-install                           # once
 make app-start                             # Expo dev server
 make app-verify                            # typecheck, tests, bundle every route
+
+# The whole loop, client against a running server. Skipped unless the
+# variable is set, so CI stays hermetic. This is the one that found the
+# four bugs above.
+cd app && COACHPULSE_LIVE_API=http://127.0.0.1:8080 npx jest live
 ```
 
-The client reads its API base URL from `expo.extra.apiBaseUrl` in
-`app/app.json`; point it at the machine running `make run`.
+The client reads `EXPO_PUBLIC_API_URL`, falling back to `expo.extra.apiBaseUrl`
+in `app/app.json`. On a phone this must be the LAN address of the machine
+running `make run` — `localhost` on a phone is the phone.
+[RUNNING.md](RUNNING.md) has the full walkthrough.
 
 Integration tests need `-p 1`: they share one database and reset it between
 tests, so concurrent packages corrupt each other's assertions.

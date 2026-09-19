@@ -95,6 +95,10 @@ func NewService(c clock.Clock, columnKey []byte) *Service {
 
 // CreateInput describes a new client.
 type CreateInput struct {
+	// ID is the id the device minted offline, when there is one. Without it
+	// the local row and the server's row are different clients, and the
+	// trainer ends up with a duplicate on the roster that never goes away.
+	ID                    *ids.ID
 	FullName              string
 	Email                 *string
 	Phone                 *string
@@ -126,17 +130,20 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Cre
 	}
 	email := normalizeEmail(in.Email)
 
-	clientID := ids.New()
+	clientID := db.ResolveID(in.ID)
 	// pgp_sym_encrypt is applied in SQL rather than in Go so the plaintext
 	// never exists in a Go string that could reach a log or a heap dump.
-	_, err := tx.Exec(ctx, `
+	// DO NOTHING rather than a plain insert, so a retried push converges on
+	// the client already created instead of failing on the primary key.
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO clients (
 			id, tenant_id, full_name, email, phone, date_of_birth, status,
 			emergency_contact_name, emergency_contact_phone, medical_notes_encrypted,
 			allow_overdraft, default_rate_minor, notes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7::client_status, $8, $9,
 		        CASE WHEN $10::text IS NULL THEN NULL ELSE pgp_sym_encrypt($10::text, $11::text) END,
-		        $12, $13, $14)`,
+		        $12, $13, $14)
+		ON CONFLICT (id) DO NOTHING`,
 		clientID, tenantID, strings.TrimSpace(in.FullName), email, trimPtr(in.Phone), in.DateOfBirth,
 		string(in.Status), trimPtr(in.EmergencyContactName), trimPtr(in.EmergencyContactPhone),
 		in.MedicalNotes, s.columnKey, in.AllowOverdraft, in.DefaultRateMinor, strings.TrimSpace(in.Notes))
@@ -146,6 +153,17 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Cre
 				"another client already uses that email address")
 		}
 		return Client{}, errs.Internal(err, "create client")
+	}
+
+	if tag.RowsAffected() == 0 {
+		// The id already existed. Visible under RLS means this tenant's row
+		// and a replay that converges; invisible means the id is another
+		// tenant's and reporting success would hide that.
+		existing, readErr := s.Get(ctx, tx, clientID)
+		if readErr != nil {
+			return Client{}, db.ErrIDTakenElsewhere("client")
+		}
+		return existing, nil
 	}
 
 	if len(in.TagIDs) > 0 {

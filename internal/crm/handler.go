@@ -11,6 +11,7 @@ import (
 
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
+	"github.com/NewMux/mtdrb_go/internal/platform/dates"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
 	"github.com/NewMux/mtdrb_go/internal/tenancy"
@@ -101,18 +102,18 @@ func pathID(r *http.Request, name string) (ids.ID, error) {
 // ---------------------------------------------------------------------------
 
 type clientRequest struct {
-	FullName              string     `json:"full_name"`
-	Email                 *string    `json:"email"`
-	Phone                 *string    `json:"phone"`
-	DateOfBirth           *time.Time `json:"date_of_birth"`
-	Status                Status     `json:"status"`
-	EmergencyContactName  *string    `json:"emergency_contact_name"`
-	EmergencyContactPhone *string    `json:"emergency_contact_phone"`
-	MedicalNotes          *string    `json:"medical_notes"`
-	AllowOverdraft        *bool      `json:"allow_overdraft"`
-	DefaultRateMinor      *int64     `json:"default_rate_minor"`
-	Notes                 string     `json:"notes"`
-	TagIDs                []ids.ID   `json:"tag_ids"`
+	FullName              string      `json:"full_name"`
+	Email                 *string     `json:"email"`
+	Phone                 *string     `json:"phone"`
+	DateOfBirth           *dates.Date `json:"date_of_birth"`
+	Status                Status      `json:"status"`
+	EmergencyContactName  *string     `json:"emergency_contact_name"`
+	EmergencyContactPhone *string     `json:"emergency_contact_phone"`
+	MedicalNotes          *string     `json:"medical_notes"`
+	AllowOverdraft        *bool       `json:"allow_overdraft"`
+	DefaultRateMinor      *int64      `json:"default_rate_minor"`
+	Notes                 string      `json:"notes"`
+	TagIDs                []ids.ID    `json:"tag_ids"`
 }
 
 func (h *Handler) createClient(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +131,7 @@ func (h *Handler) createClient(w http.ResponseWriter, r *http.Request) {
 			FullName:              req.FullName,
 			Email:                 req.Email,
 			Phone:                 req.Phone,
-			DateOfBirth:           req.DateOfBirth,
+			DateOfBirth:           req.DateOfBirth.TimePtr(),
 			Status:                req.Status,
 			EmergencyContactName:  req.EmergencyContactName,
 			EmergencyContactPhone: req.EmergencyContactPhone,
@@ -152,17 +153,17 @@ func (h *Handler) createClient(w http.ResponseWriter, r *http.Request) {
 // null are distinguishable: omitting "phone" leaves it alone, sending
 // "phone": null clears it.
 type updateRequest struct {
-	FullName              *string     `json:"full_name"`
-	Email                 **string    `json:"email"`
-	Phone                 **string    `json:"phone"`
-	DateOfBirth           **time.Time `json:"date_of_birth"`
-	Status                *Status     `json:"status"`
-	EmergencyContactName  **string    `json:"emergency_contact_name"`
-	EmergencyContactPhone **string    `json:"emergency_contact_phone"`
-	MedicalNotes          **string    `json:"medical_notes"`
-	AllowOverdraft        **bool      `json:"allow_overdraft"`
-	DefaultRateMinor      **int64     `json:"default_rate_minor"`
-	Notes                 *string     `json:"notes"`
+	FullName              *string      `json:"full_name"`
+	Email                 **string     `json:"email"`
+	Phone                 **string     `json:"phone"`
+	DateOfBirth           **dates.Date `json:"date_of_birth"`
+	Status                *Status      `json:"status"`
+	EmergencyContactName  **string     `json:"emergency_contact_name"`
+	EmergencyContactPhone **string     `json:"emergency_contact_phone"`
+	MedicalNotes          **string     `json:"medical_notes"`
+	AllowOverdraft        **bool       `json:"allow_overdraft"`
+	DefaultRateMinor      **int64      `json:"default_rate_minor"`
+	Notes                 *string      `json:"notes"`
 }
 
 func (h *Handler) updateClient(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +178,22 @@ func (h *Handler) updateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.withTenant(w, r, func(tx pgx.Tx, _ ids.ID) error {
-		client, err := h.svc.Update(r.Context(), tx, clientID, UpdateInput(req))
+		// Mapped field by field rather than converted: date_of_birth crosses
+		// the boundary as a calendar date and arrives as a timestamp, so the
+		// two structs are deliberately no longer identical.
+		client, err := h.svc.Update(r.Context(), tx, clientID, UpdateInput{
+			FullName:              req.FullName,
+			Email:                 req.Email,
+			Phone:                 req.Phone,
+			DateOfBirth:           dates.PatchPtr(req.DateOfBirth),
+			Status:                req.Status,
+			EmergencyContactName:  req.EmergencyContactName,
+			EmergencyContactPhone: req.EmergencyContactPhone,
+			MedicalNotes:          req.MedicalNotes,
+			AllowOverdraft:        req.AllowOverdraft,
+			DefaultRateMinor:      req.DefaultRateMinor,
+			Notes:                 req.Notes,
+		})
 		if err != nil {
 			return err
 		}
@@ -481,7 +497,7 @@ func (h *Handler) recordBiometrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		MeasuredOn     *time.Time       `json:"measured_on"`
+		MeasuredOn     *dates.Date      `json:"measured_on"`
 		WeightGrams    *int32           `json:"weight_grams"`
 		BodyFatBP      *int32           `json:"body_fat_bp"`
 		Circumferences map[string]int32 `json:"circumferences"`
@@ -499,9 +515,7 @@ func (h *Handler) recordBiometrics(w http.ResponseWriter, r *http.Request) {
 		Circumferences: req.Circumferences,
 		Notes:          req.Notes,
 	}
-	if req.MeasuredOn != nil {
-		in.MeasuredOn = *req.MeasuredOn
-	}
+	in.MeasuredOn = req.MeasuredOn.OrElse(time.Time{})
 
 	h.withTenant(w, r, func(tx pgx.Tx, tenantID ids.ID) error {
 		entry, err := h.svc.RecordBiometrics(r.Context(), tx, tenantID, in)

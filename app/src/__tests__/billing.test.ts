@@ -68,7 +68,15 @@ describe('sellPackage', () => {
     // the whole sale as income the day it was sold.
     const lines = drafted.lines as Record<string, unknown>[];
     expect(lines[0]?.kind).toBe('package');
-    expect(lines[0]?.package_credits).toBe(10);
+
+    // The server grants quantity × package_credits, so these two multiply.
+    // Sending 10 and 10 granted a hundred credits at a tenth of the price
+    // each — the live run is what caught it, because this assertion used to
+    // check the shape this client happened to send rather than what it means.
+    expect(lines[0]?.quantity).toBe(10);
+    expect(lines[0]?.package_credits).toBe(1);
+    expect((lines[0]?.quantity as number) * (lines[0]?.package_credits as number)).toBe(10);
+    expect((lines[0]?.quantity as number) * (lines[0]?.unit_price_minor as number)).toBe(50_000);
   });
 
   it('gives the draft and the issue their own idempotency keys', async () => {

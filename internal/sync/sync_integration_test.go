@@ -382,58 +382,90 @@ func TestPushDrainsAMorningOfOfflineWork(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The device queues a morning's work, offline. The workout id is minted
-	// on the device, which is what lets the sets reference it before the
-	// server has ever seen it.
+	// The device queues a morning's work, offline, and drains it in ONE batch
+	// — which is the only thing a real outbox can do. It cannot start the
+	// workout, wait for the server to name it, and only then log the sets:
+	// there is no server to ask.
+	//
+	// So the workout id is minted on the device and every set references it
+	// immediately. An earlier version of this test pushed twice and read the
+	// server's own id out of the first response, which quietly hid the fact
+	// that offline-minted ids were being discarded.
 	workoutID := ids.New()
+	clientMintedID := ids.New()
+	measurementID := ids.New()
 	t0 := may1.Add(9 * time.Hour)
 
-	result := f.push(t,
+	batch := []sync.Operation{
 		op(t, sync.OpMarkAttendance, t0, map[string]any{
 			"attendee_id": attendeeID, "status": "completed",
 		}),
 		op(t, sync.OpStartWorkout, t0.Add(time.Minute), map[string]any{
-			"id": workoutID, "client_id": clientID, "performed_on": may1,
+			// Dates cross the wire as calendar dates, the way the spec
+			// publishes them and the way the app actually sends them.
+			"id": workoutID, "client_id": clientID, "performed_on": "2026-05-01",
 		}),
-	)
-	if result.Applied != 2 {
-		t.Fatalf("applied %d of 2: %+v", result.Applied, result.Results)
 	}
-
-	// The server assigned the workout its own id; the device learns it from
-	// the result and logs sets against it.
-	var startedWorkout programming.Workout
-	if err := json.Unmarshal(result.Results[1].Result, &startedWorkout); err != nil {
-		t.Fatalf("decode workout result: %v", err)
-	}
-
-	logs := []sync.Operation{}
 	for set := 1; set <= 3; set++ {
-		logs = append(logs, op(t, sync.OpLogSet, t0.Add(time.Duration(set)*2*time.Minute), map[string]any{
-			"workout_id": startedWorkout.ID, "exercise_id": squatID,
+		batch = append(batch, op(t, sync.OpLogSet, t0.Add(time.Duration(set)*2*time.Minute), map[string]any{
+			"workout_id": workoutID, "exercise_id": squatID,
 			"set_index": set, "reps": 8, "load_grams": 100000, "rpe_tenths": 80,
 		}))
 	}
-	logs = append(logs,
+	batch = append(batch,
 		op(t, sync.OpCompleteWorkout, t0.Add(30*time.Minute), map[string]any{
-			"workout_id": startedWorkout.ID, "notes": "strong session",
+			"workout_id": workoutID, "notes": "strong session",
 		}),
 		// Cash taken in a basement — the case ADR 0004 exists for.
 		op(t, sync.OpRecordPayment, t0.Add(31*time.Minute), map[string]any{
 			"invoice_id": invoiceID, "amount_minor": 8000,
 			"currency": "EUR", "instrument": "cash", "reference": "envelope",
+			"received_on": "2026-05-01",
 		}),
 		op(t, sync.OpRecordBiometrics, t0.Add(32*time.Minute), map[string]any{
-			"client_id": clientID, "measured_on": may1, "weight_grams": 72400,
+			"id": measurementID, "client_id": clientID,
+			"measured_on": "2026-05-01", "weight_grams": 72400,
+		}),
+		op(t, sync.OpCreateClient, t0.Add(33*time.Minute), map[string]any{
+			"id": clientMintedID, "full_name": "Walk-in, signed up on the floor",
 		}),
 	)
 
-	second := f.push(t, logs...)
-	if second.Applied != len(logs) {
-		t.Fatalf("applied %d of %d: %+v", second.Applied, len(logs), second.Results)
+	result := f.push(t, batch...)
+	if result.Applied != len(batch) {
+		t.Fatalf("applied %d of %d: %+v", result.Applied, len(batch), result.Results)
 	}
-	if second.Conflicts != 0 || second.Rejected != 0 {
-		t.Errorf("unexpected failures: %+v", second.Results)
+	if result.Conflicts != 0 || result.Rejected != 0 {
+		t.Errorf("unexpected failures: %+v", result.Results)
+	}
+
+	// The server kept the ids the device chose. Without this the sets above
+	// would have been refused, and the walk-in client would arrive on the
+	// next pull as a second person.
+	var startedWorkout programming.Workout
+	if err := json.Unmarshal(result.Results[1].Result, &startedWorkout); err != nil {
+		t.Fatalf("decode workout result: %v", err)
+	}
+	if startedWorkout.ID != workoutID {
+		t.Fatalf("workout id = %s, want the device's %s", startedWorkout.ID, workoutID)
+	}
+
+	// The walk-in is the quieter half of the same bug: a server-minted id
+	// leaves the device's optimistic row orphaned, and the next pull adds the
+	// same person a second time, permanently.
+	var createdClient crm.Client
+	if err := json.Unmarshal(result.Results[len(batch)-1].Result, &createdClient); err != nil {
+		t.Fatalf("decode client result: %v", err)
+	}
+	if createdClient.ID != clientMintedID {
+		t.Fatalf("client id = %s, want the device's %s", createdClient.ID, clientMintedID)
+	}
+
+	// Replaying the whole batch must converge rather than duplicate: this is
+	// what happens when a push times out after the server committed it.
+	replay := f.push(t, batch...)
+	if replay.Rejected != 0 {
+		t.Errorf("a replayed batch was rejected: %+v", replay.Results)
 	}
 
 	// Everything landed, and the books agree with the calendar.

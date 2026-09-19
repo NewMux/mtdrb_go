@@ -12,6 +12,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
+	"github.com/NewMux/mtdrb_go/internal/platform/dates"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
 	"github.com/NewMux/mtdrb_go/internal/platform/money"
@@ -110,18 +111,18 @@ func pathID(r *http.Request, name string) (ids.ID, error) {
 // ---------------------------------------------------------------------------
 
 type lineRequest struct {
-	Kind            LineKind   `json:"kind"`
-	Description     string     `json:"description"`
-	Quantity        int        `json:"quantity"`
-	UnitPriceMinor  int64      `json:"unit_price_minor"`
-	PackageCredits  *int       `json:"package_credits"`
-	CreditsExpireOn *time.Time `json:"credits_expire_on"`
+	Kind            LineKind    `json:"kind"`
+	Description     string      `json:"description"`
+	Quantity        int         `json:"quantity"`
+	UnitPriceMinor  int64       `json:"unit_price_minor"`
+	PackageCredits  *int        `json:"package_credits"`
+	CreditsExpireOn *dates.Date `json:"credits_expire_on"`
 }
 
 type draftRequest struct {
 	ClientID ids.ID        `json:"client_id"`
 	Currency string        `json:"currency"`
-	DueDate  *time.Time    `json:"due_date"`
+	DueDate  *dates.Date   `json:"due_date"`
 	Notes    string        `json:"notes"`
 	Lines    []lineRequest `json:"lines"`
 }
@@ -129,11 +130,21 @@ type draftRequest struct {
 func (d draftRequest) toInput() CreateDraftInput {
 	lines := make([]DraftLineInput, 0, len(d.Lines))
 	for _, l := range d.Lines {
-		lines = append(lines, DraftLineInput(l))
+		// Mapped rather than converted: credits_expire_on arrives as a
+		// calendar date and crosses into the service as a timestamp, so the
+		// wire and service shapes are deliberately not identical.
+		lines = append(lines, DraftLineInput{
+			Kind:            l.Kind,
+			Description:     l.Description,
+			Quantity:        l.Quantity,
+			UnitPriceMinor:  l.UnitPriceMinor,
+			PackageCredits:  l.PackageCredits,
+			CreditsExpireOn: l.CreditsExpireOn.TimePtr(),
+		})
 	}
 	return CreateDraftInput{
 		ClientID: d.ClientID, Currency: d.Currency,
-		DueDate: d.DueDate, Notes: d.Notes, Lines: lines,
+		DueDate: d.DueDate.TimePtr(), Notes: d.Notes, Lines: lines,
 	}
 }
 
@@ -242,9 +253,9 @@ func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		IssueDate       *time.Time `json:"issue_date"`
-		DueDate         *time.Time `json:"due_date"`
-		PaymentMethodID *ids.ID    `json:"payment_method_id"`
+		IssueDate       *dates.Date `json:"issue_date"`
+		DueDate         *dates.Date `json:"due_date"`
+		PaymentMethodID *ids.ID     `json:"payment_method_id"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.Error(w, r, err)
@@ -253,13 +264,11 @@ func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
 	h.withTenant(w, r, func(tx pgx.Tx, tenantID ids.ID) error {
 		in := IssueInput{
 			InvoiceID:       invoiceID,
-			DueDate:         req.DueDate,
+			DueDate:         req.DueDate.TimePtr(),
 			PaymentMethodID: req.PaymentMethodID,
 			IssuedBy:        actor(r),
 		}
-		if req.IssueDate != nil {
-			in.IssueDate = *req.IssueDate
-		}
+		in.IssueDate = req.IssueDate.OrElse(time.Time{})
 		invoice, err := h.svc.Issue(r.Context(), tx, tenantID, in)
 		if err != nil {
 			return err
@@ -386,7 +395,7 @@ func (h *Handler) recordPayment(w http.ResponseWriter, r *http.Request) {
 		AmountMinor int64             `json:"amount_minor"`
 		Currency    string            `json:"currency"`
 		Instrument  ledger.Instrument `json:"instrument"`
-		ReceivedOn  *time.Time        `json:"received_on"`
+		ReceivedOn  *dates.Date       `json:"received_on"`
 		Reference   string            `json:"reference"`
 		Notes       string            `json:"notes"`
 	}
@@ -414,9 +423,7 @@ func (h *Handler) recordPayment(w http.ResponseWriter, r *http.Request) {
 			Notes:      req.Notes,
 			RecordedBy: actor(r),
 		}
-		if req.ReceivedOn != nil {
-			in.ReceivedOn = *req.ReceivedOn
-		}
+		in.ReceivedOn = req.ReceivedOn.OrElse(time.Time{})
 		result, err := h.svc.RecordPayment(r.Context(), tx, tenantID, in)
 		if err != nil {
 			return err

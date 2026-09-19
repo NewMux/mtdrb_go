@@ -10,6 +10,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
+	"github.com/NewMux/mtdrb_go/internal/platform/dates"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
 	"github.com/NewMux/mtdrb_go/internal/platform/money"
@@ -281,14 +282,14 @@ func (h *Handler) addAttendee(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) recur(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SessionTypeID ids.ID    `json:"session_type_id"`
-		ClientIDs     []ids.ID  `json:"client_ids"`
-		Weekdays      []int     `json:"weekdays"`
-		StartsOn      time.Time `json:"starts_on"`
-		EndsOn        time.Time `json:"ends_on"`
-		TimeOfDay     string    `json:"time_of_day"`
-		Timezone      string    `json:"timezone"`
-		Location      string    `json:"location"`
+		SessionTypeID ids.ID     `json:"session_type_id"`
+		ClientIDs     []ids.ID   `json:"client_ids"`
+		Weekdays      []int      `json:"weekdays"`
+		StartsOn      dates.Date `json:"starts_on"`
+		EndsOn        dates.Date `json:"ends_on"`
+		TimeOfDay     string     `json:"time_of_day"`
+		Timezone      string     `json:"timezone"`
+		Location      string     `json:"location"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.Error(w, r, err)
@@ -305,8 +306,8 @@ func (h *Handler) recur(w http.ResponseWriter, r *http.Request) {
 			SessionTypeID: req.SessionTypeID,
 			ClientIDs:     req.ClientIDs,
 			Weekdays:      req.Weekdays,
-			StartsOn:      req.StartsOn,
-			EndsOn:        req.EndsOn,
+			StartsOn:      req.StartsOn.Time(),
+			EndsOn:        req.EndsOn.Time(),
 			TimeOfDay:     timeOfDay,
 			Timezone:      req.Timezone,
 			Location:      req.Location,
@@ -356,7 +357,7 @@ func (h *Handler) markAttendance(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) markDay(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Day    time.Time        `json:"day"`
+		Day    dates.Date       `json:"day"`
 		Status AttendanceStatus `json:"status"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
@@ -367,7 +368,7 @@ func (h *Handler) markDay(w http.ResponseWriter, r *http.Request) {
 		req.Status = Completed
 	}
 	h.withTenant(w, r, func(tx pgx.Tx, tenantID ids.ID) error {
-		result, err := h.svc.MarkDay(r.Context(), tx, tenantID, req.Day, req.Status, markedBy(r))
+		result, err := h.svc.MarkDay(r.Context(), tx, tenantID, req.Day.Time(), req.Status, markedBy(r))
 		if err != nil {
 			return err
 		}
@@ -382,13 +383,13 @@ func (h *Handler) markDay(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) grantPackage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClientID       ids.ID     `json:"client_id"`
-		Name           string     `json:"name"`
-		Credits        int        `json:"credits"`
-		UnitPriceMinor int64      `json:"unit_price_minor"`
-		Currency       string     `json:"currency"`
-		PurchasedOn    *time.Time `json:"purchased_on"`
-		ExpiresAt      *time.Time `json:"expires_at"`
+		ClientID       ids.ID      `json:"client_id"`
+		Name           string      `json:"name"`
+		Credits        int         `json:"credits"`
+		UnitPriceMinor int64       `json:"unit_price_minor"`
+		Currency       string      `json:"currency"`
+		PurchasedOn    *dates.Date `json:"purchased_on"`
+		ExpiresAt      *dates.Date `json:"expires_at"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.Error(w, r, err)
@@ -407,11 +408,9 @@ func (h *Handler) grantPackage(w http.ResponseWriter, r *http.Request) {
 			Name:      req.Name,
 			Credits:   req.Credits,
 			UnitPrice: money.New(req.UnitPriceMinor, currency),
-			ExpiresAt: req.ExpiresAt,
+			ExpiresAt: req.ExpiresAt.TimePtr(),
 		}
-		if req.PurchasedOn != nil {
-			in.PurchasedOn = *req.PurchasedOn
-		}
+		in.PurchasedOn = req.PurchasedOn.OrElse(time.Time{})
 		pkg, err := h.billing.Grant(r.Context(), tx, tenantID, in)
 		if err != nil {
 			return err

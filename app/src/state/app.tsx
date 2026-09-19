@@ -60,7 +60,21 @@ interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+/**
+ * Where the API lives.
+ *
+ * The environment variable comes first because `localhost` on a phone is the
+ * phone. Testing on a real device means pointing at the machine running the
+ * API, and an env var is a flag on the dev-server command rather than an edit
+ * to a checked-in file that then wants unstaging before every commit.
+ *
+ * EXPO_PUBLIC_ is Expo's own convention: it is inlined at build time, so this
+ * works in a release build too.
+ */
 function baseUrl(): string {
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL;
+  if (fromEnv) return fromEnv.replace(/\/+$/, '');
+
   const configured = (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl;
   return configured ?? 'http://localhost:8080';
 }

@@ -23,14 +23,14 @@ import { newId } from '@/lib/id';
 async function act(
   db: Database,
   type: OperationType,
-  data: Record<string, unknown>,
+  data: Record<string, unknown> | ((id: string) => Record<string, unknown>),
   localEffect?: (id: string) => Promise<void>,
 ): Promise<string> {
   const id = newId();
   const queuedAt = new Date();
   await db.transaction(async () => {
     if (localEffect) await localEffect(id);
-    await enqueue(db, id, type, data, queuedAt);
+    await enqueue(db, id, type, typeof data === 'function' ? data(id) : data, queuedAt);
   });
   return id;
 }
@@ -78,13 +78,17 @@ export async function startWorkout(
   return act(
     db,
     'workout.start',
-    {
+    (id) => ({
+      // The id travels with the operation. Without it the server mints its own
+      // and every set queued behind this workout — in this same push batch —
+      // references a workout the server has never heard of.
+      id,
       client_id: clientId,
       day_id: opts.dayId ?? null,
       session_id: opts.sessionId ?? null,
       week_number: opts.weekNumber ?? 1,
       performed_on: performedOn,
-    },
+    }),
     async (id) => {
       // The workout exists locally under the id the device minted, so sets can
       // reference it before the server has ever heard of it.
@@ -133,10 +137,20 @@ export async function logSet(
 ): Promise<string> {
   const completed = input.completed ?? true;
 
+  // The row id is resolved before the operation is queued, not inside the
+  // local effect, because the server has to be told the same id. Correcting a
+  // typed weight reuses the existing row's id so the correction lands on the
+  // set already there, on the device and on the server alike.
+  const existing = await db.selectOne<{ id: string }>(
+    `SELECT id FROM set_logs WHERE workout_session_id = ? AND exercise_id = ? AND set_index = ?`,
+    [workoutId, exerciseId, setIndex],
+  );
+
   return act(
     db,
     'workout.log_set',
-    {
+    (id) => ({
+      id: existing?.id ?? id,
       workout_id: workoutId,
       exercise_id: exerciseId,
       set_index: setIndex,
@@ -149,12 +163,8 @@ export async function logSet(
       is_warmup: input.isWarmup ?? false,
       completed,
       notes: input.notes ?? '',
-    },
+    }),
     async (id) => {
-      const existing = await db.selectOne<{ id: string }>(
-        `SELECT id FROM set_logs WHERE workout_session_id = ? AND exercise_id = ? AND set_index = ?`,
-        [workoutId, exerciseId, setIndex],
-      );
       const rowId = existing?.id ?? id;
 
       await db.execute(
@@ -237,12 +247,15 @@ export async function createClient(
   return act(
     db,
     'client.create',
-    {
+    (id) => ({
+      // Same id as the local row, so the client does not come back from the
+      // next pull as a second person with the same name.
+      id,
       full_name: fullName,
       email: opts.email ?? null,
       phone: opts.phone ?? null,
       notes: opts.notes ?? '',
-    },
+    }),
     async (id) => {
       await db.execute(
         `INSERT INTO clients (id, full_name, email, phone, status, notes)
@@ -270,14 +283,15 @@ export async function recordBiometrics(
   return act(
     db,
     'biometrics.record',
-    {
+    (id) => ({
+      id,
       client_id: clientId,
       measured_on: measuredOn,
       weight_grams: input.weightGrams ?? null,
       body_fat_bp: input.bodyFatBP ?? null,
       circumferences: input.circumferences ?? {},
       notes: input.notes ?? '',
-    },
+    }),
     async (id) => {
       await db.execute(
         `INSERT INTO biometric_entries

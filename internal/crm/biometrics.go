@@ -3,6 +3,7 @@ package crm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,8 @@ type BiometricEntry struct {
 
 // BiometricInput describes a measurement to record.
 type BiometricInput struct {
+	// ID is the id the device minted offline, when there is one.
+	ID             *ids.ID
 	ClientID       ids.ID
 	MeasuredOn     time.Time
 	WeightGrams    *int32
@@ -74,21 +77,56 @@ func (s *Service) RecordBiometrics(ctx context.Context, tx pgx.Tx, tenantID ids.
 	}
 
 	e := BiometricEntry{
-		ID: ids.New(), ClientID: in.ClientID, MeasuredOn: measuredOn,
+		ID: db.ResolveID(in.ID), ClientID: in.ClientID, MeasuredOn: measuredOn,
 		WeightGrams: in.WeightGrams, BodyFatBP: in.BodyFatBP,
 		Circumferences: circumferences, Notes: in.Notes,
 	}
-	if err := tx.QueryRow(ctx, `
+	// DO NOTHING so a retried push converges rather than failing on the key.
+	scanErr := tx.QueryRow(ctx, `
 		INSERT INTO biometric_entries
 			(id, tenant_id, client_id, measured_on, weight_grams, body_fat_bp, circumferences, notes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (id) DO NOTHING
 		RETURNING created_at, server_seq`,
 		e.ID, tenantID, in.ClientID, measuredOn, in.WeightGrams, in.BodyFatBP, payload, in.Notes,
-	).Scan(&e.CreatedAt, &e.ServerSeq); err != nil {
-		if db.IsForeignKeyViolation(err) {
-			return BiometricEntry{}, errs.NotFound("client")
+	).Scan(&e.CreatedAt, &e.ServerSeq)
+
+	switch {
+	case errors.Is(scanErr, pgx.ErrNoRows):
+		existing, readErr := s.getBiometricEntry(ctx, tx, e.ID)
+		if readErr != nil {
+			return BiometricEntry{}, db.ErrIDTakenElsewhere("measurement")
 		}
-		return BiometricEntry{}, errs.Internal(err, "record biometrics")
+		return existing, nil
+	case db.IsForeignKeyViolation(scanErr):
+		return BiometricEntry{}, errs.NotFound("client")
+	case scanErr != nil:
+		return BiometricEntry{}, errs.Internal(scanErr, "record biometrics")
+	}
+	return e, nil
+}
+
+// getBiometricEntry reads one measurement, under row-level security.
+//
+// Used to tell a replayed insert from an id that belongs to another tenant:
+// this returns nothing in the second case, which is the whole point.
+func (s *Service) getBiometricEntry(ctx context.Context, tx pgx.Tx, id ids.ID) (BiometricEntry, error) {
+	var e BiometricEntry
+	var payload []byte
+	if err := tx.QueryRow(ctx, `
+		SELECT id, client_id, measured_on, weight_grams, body_fat_bp, circumferences,
+		       notes, created_at, server_seq
+		  FROM biometric_entries
+		 WHERE id = $1 AND deleted_at IS NULL`, id,
+	).Scan(&e.ID, &e.ClientID, &e.MeasuredOn, &e.WeightGrams, &e.BodyFatBP,
+		&payload, &e.Notes, &e.CreatedAt, &e.ServerSeq); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BiometricEntry{}, errs.NotFound("measurement")
+		}
+		return BiometricEntry{}, errs.Internal(err, "read measurement")
+	}
+	if err := json.Unmarshal(payload, &e.Circumferences); err != nil {
+		return BiometricEntry{}, errs.Internal(err, "decode circumferences")
 	}
 	return e, nil
 }

@@ -2,6 +2,7 @@ package programming
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -65,6 +66,10 @@ type Workout struct {
 
 // StartWorkoutInput describes a training session being logged.
 type StartWorkoutInput struct {
+	// ID is the workout id the device minted offline, when there is one.
+	// Honouring it is what lets the sets queued behind this workout reference
+	// it in the same push batch.
+	ID           *ids.ID
 	ClientID     ids.ID
 	AssignmentID *ids.ID
 	DayID        *ids.ID
@@ -87,22 +92,39 @@ func (s *Service) StartWorkout(ctx context.Context, tx pgx.Tx, tenantID ids.ID, 
 	performedOn := truncateToDay(in.PerformedOn)
 
 	w := Workout{
-		ID: ids.New(), ClientID: in.ClientID, AssignmentID: in.AssignmentID,
+		ID: db.ResolveID(in.ID), ClientID: in.ClientID, AssignmentID: in.AssignmentID,
 		DayID: in.DayID, SessionID: in.SessionID, WeekNumber: in.WeekNumber,
 		PerformedOn: performedOn, Status: WorkoutInProgress,
 		Notes: strings.TrimSpace(in.Notes),
 	}
-	if err := tx.QueryRow(ctx, `
+	// DO NOTHING rather than a plain insert: a push that timed out and is
+	// retried must converge on the workout already created, not fail on its
+	// primary key.
+	err := tx.QueryRow(ctx, `
 		INSERT INTO workout_sessions
 			(id, tenant_id, client_id, assignment_id, day_id, session_id,
 			 week_number, performed_on, notes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING server_seq`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (id) DO NOTHING
+		RETURNING server_seq`,
 		w.ID, tenantID, w.ClientID, w.AssignmentID, w.DayID, w.SessionID,
 		w.WeekNumber, w.PerformedOn, w.Notes,
-	).Scan(&w.ServerSeq); err != nil {
-		if db.IsForeignKeyViolation(err) {
-			return Workout{}, errs.NotFound("client, assignment, training day or session")
+	).Scan(&w.ServerSeq)
+
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// The id already existed. Re-read it under row-level security: if it
+		// is this tenant's, the operation is simply a replay and converges.
+		// If it is invisible, the id belongs to someone else and saying
+		// "created" would be a lie.
+		existing, readErr := s.GetWorkout(ctx, tx, w.ID)
+		if readErr != nil {
+			return Workout{}, db.ErrIDTakenElsewhere("workout")
 		}
+		return existing, nil
+	case db.IsForeignKeyViolation(err):
+		return Workout{}, errs.NotFound("client, assignment, training day or session")
+	case err != nil:
 		return Workout{}, errs.Internal(err, "start workout")
 	}
 	return w, nil
@@ -110,6 +132,13 @@ func (s *Service) StartWorkout(ctx context.Context, tx pgx.Tx, tenantID ids.ID, 
 
 // LogSetInput describes one performed set.
 type LogSetInput struct {
+	// ID is the id the device minted offline, when there is one.
+	//
+	// The upsert below converges on the natural key, so the *server* is
+	// consistent either way — but the device mirrors rows by id, so a
+	// server-minted id comes back from the next pull as a second copy of a set
+	// the trainer already logged.
+	ID                *ids.ID
 	WorkoutID         ids.ID
 	ExerciseID        ids.ID
 	ProgramExerciseID *ids.ID
@@ -160,7 +189,7 @@ func (s *Service) LogSet(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Log
 	}
 
 	log := SetLog{
-		ID: ids.New(), ExerciseID: in.ExerciseID, ProgramExerciseID: in.ProgramExerciseID,
+		ID: db.ResolveID(in.ID), ExerciseID: in.ExerciseID, ProgramExerciseID: in.ProgramExerciseID,
 		SetIndex: in.SetIndex, Reps: in.Reps, LoadGrams: in.LoadGrams,
 		RPETenths: in.RPETenths, RIR: in.RIR, RestSeconds: in.RestSeconds,
 		Tempo: strings.TrimSpace(in.Tempo), IsWarmup: in.IsWarmup,

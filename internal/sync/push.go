@@ -11,6 +11,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
+	"github.com/NewMux/mtdrb_go/internal/platform/dates"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
 	"github.com/NewMux/mtdrb_go/internal/platform/money"
@@ -193,30 +194,29 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, tenantID ids.ID, deps De
 
 	case OpStartWorkout:
 		var in struct {
-			ID           *ids.ID    `json:"id"`
-			ClientID     ids.ID     `json:"client_id"`
-			AssignmentID *ids.ID    `json:"assignment_id"`
-			DayID        *ids.ID    `json:"day_id"`
-			SessionID    *ids.ID    `json:"session_id"`
-			WeekNumber   int        `json:"week_number"`
-			PerformedOn  *time.Time `json:"performed_on"`
-			Notes        string     `json:"notes"`
+			ID           *ids.ID     `json:"id"`
+			ClientID     ids.ID      `json:"client_id"`
+			AssignmentID *ids.ID     `json:"assignment_id"`
+			DayID        *ids.ID     `json:"day_id"`
+			SessionID    *ids.ID     `json:"session_id"`
+			WeekNumber   int         `json:"week_number"`
+			PerformedOn  *dates.Date `json:"performed_on"`
+			Notes        string      `json:"notes"`
 		}
 		if err := decode(op, &in); err != nil {
 			return nil, err
 		}
 		start := programming.StartWorkoutInput{
-			ClientID: in.ClientID, AssignmentID: in.AssignmentID, DayID: in.DayID,
+			ID: in.ID, ClientID: in.ClientID, AssignmentID: in.AssignmentID, DayID: in.DayID,
 			SessionID: in.SessionID, WeekNumber: in.WeekNumber, Notes: in.Notes,
 		}
-		if in.PerformedOn != nil {
-			start.PerformedOn = *in.PerformedOn
-		}
+		start.PerformedOn = in.PerformedOn.OrElse(time.Time{})
 		out, err := deps.Programming.StartWorkout(ctx, tx, tenantID, start)
 		return encode(out, err)
 
 	case OpLogSet:
 		var in struct {
+			ID                *ids.ID `json:"id"`
 			WorkoutID         ids.ID  `json:"workout_id"`
 			ExerciseID        ids.ID  `json:"exercise_id"`
 			ProgramExerciseID *ids.ID `json:"program_exercise_id"`
@@ -238,7 +238,7 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, tenantID ids.ID, deps De
 		// LogSet upserts on (workout, exercise, set index), so replaying this
 		// converges on the same set rather than stacking duplicates.
 		out, err := deps.Programming.LogSet(ctx, tx, tenantID, programming.LogSetInput{
-			WorkoutID: in.WorkoutID, ExerciseID: in.ExerciseID,
+			ID: in.ID, WorkoutID: in.WorkoutID, ExerciseID: in.ExerciseID,
 			ProgramExerciseID: in.ProgramExerciseID, SetIndex: in.SetIndex,
 			Reps: in.Reps, LoadGrams: in.LoadGrams, RPETenths: in.RPETenths,
 			RIR: in.RIR, RestSeconds: in.RestSeconds, Tempo: in.Tempo,
@@ -264,7 +264,7 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, tenantID ids.ID, deps De
 			AmountMinor int64             `json:"amount_minor"`
 			Currency    string            `json:"currency"`
 			Instrument  ledger.Instrument `json:"instrument"`
-			ReceivedOn  *time.Time        `json:"received_on"`
+			ReceivedOn  *dates.Date       `json:"received_on"`
 			Reference   string            `json:"reference"`
 			Notes       string            `json:"notes"`
 		}
@@ -280,26 +280,25 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, tenantID ids.ID, deps De
 			Instrument: in.Instrument, Reference: in.Reference,
 			Notes: in.Notes, RecordedBy: actor,
 		}
-		if in.ReceivedOn != nil {
-			pay.ReceivedOn = *in.ReceivedOn
-		}
+		pay.ReceivedOn = in.ReceivedOn.OrElse(time.Time{})
 		out, err := deps.Billing.RecordPayment(ctx, tx, tenantID, pay)
 		return encode(out, err)
 
 	case OpCreateClient:
 		var in struct {
-			FullName    string     `json:"full_name"`
-			Email       *string    `json:"email"`
-			Phone       *string    `json:"phone"`
-			DateOfBirth *time.Time `json:"date_of_birth"`
-			Notes       string     `json:"notes"`
+			ID          *ids.ID     `json:"id"`
+			FullName    string      `json:"full_name"`
+			Email       *string     `json:"email"`
+			Phone       *string     `json:"phone"`
+			DateOfBirth *dates.Date `json:"date_of_birth"`
+			Notes       string      `json:"notes"`
 		}
 		if err := decode(op, &in); err != nil {
 			return nil, err
 		}
 		out, err := deps.CRM.Create(ctx, tx, tenantID, crm.CreateInput{
-			FullName: in.FullName, Email: in.Email, Phone: in.Phone,
-			DateOfBirth: in.DateOfBirth, Notes: in.Notes,
+			ID: in.ID, FullName: in.FullName, Email: in.Email, Phone: in.Phone,
+			DateOfBirth: in.DateOfBirth.TimePtr(), Notes: in.Notes,
 		})
 		return encode(out, err)
 
@@ -321,8 +320,9 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, tenantID ids.ID, deps De
 
 	case OpRecordBiometrics:
 		var in struct {
+			ID             *ids.ID          `json:"id"`
 			ClientID       ids.ID           `json:"client_id"`
-			MeasuredOn     *time.Time       `json:"measured_on"`
+			MeasuredOn     *dates.Date      `json:"measured_on"`
 			WeightGrams    *int32           `json:"weight_grams"`
 			BodyFatBP      *int32           `json:"body_fat_bp"`
 			Circumferences map[string]int32 `json:"circumferences"`
@@ -332,12 +332,10 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, tenantID ids.ID, deps De
 			return nil, err
 		}
 		bio := crm.BiometricInput{
-			ClientID: in.ClientID, WeightGrams: in.WeightGrams,
+			ID: in.ID, ClientID: in.ClientID, WeightGrams: in.WeightGrams,
 			BodyFatBP: in.BodyFatBP, Circumferences: in.Circumferences, Notes: in.Notes,
 		}
-		if in.MeasuredOn != nil {
-			bio.MeasuredOn = *in.MeasuredOn
-		}
+		bio.MeasuredOn = in.MeasuredOn.OrElse(time.Time{})
 		out, err := deps.CRM.RecordBiometrics(ctx, tx, tenantID, bio)
 		return encode(out, err)
 

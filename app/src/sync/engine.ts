@@ -57,6 +57,18 @@ async function upsertRow(
     return value;
   });
 
+  // A set is identified by (workout, exercise, set index), not by its id: the
+  // server upserts on that natural key. Two devices logging the same set mint
+  // different ids, so without this the loser's row survives locally alongside
+  // the winner's and the trainer sees set 1 twice, for ever.
+  if (table === 'set_logs' && row.workout_session_id && row.exercise_id) {
+    await db.execute(
+      `DELETE FROM set_logs
+        WHERE workout_session_id = ? AND exercise_id = ? AND set_index = ? AND id <> ?`,
+      [row.workout_session_id, row.exercise_id, row.set_index ?? null, row.id],
+    );
+  }
+
   const placeholders = columns.map(() => '?').join(', ');
   const updates = columns
     .filter((c) => c !== 'id')
