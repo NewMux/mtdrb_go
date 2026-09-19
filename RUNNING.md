@@ -192,3 +192,14 @@ EXPO_PUBLIC_DEMO=1 npx expo export --platform web --clear --output-dir dist
 
 Set `expo.experiments.baseUrl` in `app.json` to the path it will be served
 from, or the router will 404 on load.
+
+**Embedding it in an iframe needs one more thing.** A frame sandboxed without
+`allow-same-origin` has an opaque origin, and `expo-sqlite` on web needs both a
+Worker (refused: "cannot be accessed from origin 'null'") and OPFS (refused
+outright). The app would sit on its launch spinner for ever.
+
+So a demo build on the web uses sql.js's asm.js engine instead — no worker, no
+WebAssembly to fetch, no storage handle, nothing the sandbox denies. It is
+in-memory only, which for a seeded demo costs nothing: the seed runs again on
+reload. See `app/src/demo/sqljs.ts`; the real app keeps `expo-sqlite`, which is
+the right driver on a device, and the engine is absent from a non-demo build.

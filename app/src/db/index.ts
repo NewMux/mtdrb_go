@@ -6,6 +6,7 @@
  * exercised against a real SQLite in Node without a simulator.
  */
 
+import { Platform } from 'react-native';
 import * as SQLite from 'expo-sqlite';
 import { MIGRATIONS } from './schema';
 import type { Database, Row } from './types';
@@ -42,9 +43,23 @@ class SQLiteDatabase implements Database {
 
 let instance: Database | null = null;
 
-/** Opens the local database and applies the schema. */
+/**
+ * Opens the local database and applies the schema.
+ *
+ * A demo build on the web takes a different driver. expo-sqlite needs a Worker
+ * and OPFS there, and a frame sandboxed without `allow-same-origin` — which is
+ * how an embedded demo is hosted — denies both, so the app never started at
+ * all. The condition is on the inlined build flag so this branch, and the
+ * engine behind it, disappear from a normal build.
+ */
 export async function openDatabase(): Promise<Database> {
   if (instance) return instance;
+
+  if (process.env.EXPO_PUBLIC_DEMO === '1' && Platform.OS === 'web') {
+    const { openInPageDatabase } = await import('@/demo/sqljs');
+    instance = await openInPageDatabase();
+    return instance;
+  }
 
   const db = await SQLite.openDatabaseAsync('coachpulse.db');
   // WAL keeps a background sync write from blocking a read the trainer is

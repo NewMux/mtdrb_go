@@ -6,13 +6,13 @@
  */
 
 import React, { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
 import { AppProvider, useApp } from '@/state/app';
-import { colors } from '@/ui/theme';
+import { colors, space, type as typography } from '@/ui/theme';
 
 /**
  * Sends the trainer to the right place.
@@ -37,11 +37,26 @@ function AuthGate() {
 }
 
 function Shell() {
-  const { ready } = useApp();
+  const { ready, fatal } = useApp();
+
+  // No local database means no app: every screen reads from it. Saying so
+  // beats a spinner that never stops.
+  if (fatal) {
+    return (
+      <View style={styles.centre}>
+        <Text style={styles.fatalTitle}>Can&apos;t open storage</Text>
+        <Text style={styles.fatalBody}>
+          CoachPulse keeps everything on the device, and this browser will not let it.
+          {'\n\n'}
+          {fatal}
+        </Text>
+      </View>
+    );
+  }
 
   if (!ready) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={styles.centre}>
         <ActivityIndicator color={colors.accent} size="large" />
       </View>
     );
@@ -80,3 +95,15 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  centre: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: space.xl,
+  },
+  fatalTitle: { ...typography.title, color: colors.ink, marginBottom: space.md },
+  fatalBody: { ...typography.body, color: colors.inkMuted, textAlign: 'center' },
+});

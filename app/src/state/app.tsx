@@ -51,6 +51,15 @@ export interface SyncState {
 interface AppContextValue {
   /** Null only before the database has opened. */
   db: Database | null;
+  /**
+   * Set when the local database could not be opened at all.
+   *
+   * Worth its own state rather than a thrown error: without a database there
+   * is no app, and the honest thing is to say so. Leaving `ready` false
+   * instead left the launch spinner turning for ever, which looks identical
+   * to a slow network and tells the trainer nothing.
+   */
+  fatal: string | null;
   api: ApiClient;
   account: Account | null;
   /** False while the database opens and the stored account is restored. */
@@ -94,6 +103,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [db, setDb] = useState<Database | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [ready, setReady] = useState(false);
+  const [fatal, setFatal] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [sync, setSync] = useState<SyncState>({
     running: false, offline: false, lastSyncAt: null, pending: 0, failed: 0, error: null,
@@ -126,7 +136,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const database = await openDatabase();
+      let database: Database;
+      try {
+        database = await openDatabase();
+      } catch (cause) {
+        if (cancelled) return;
+        setFatal(cause instanceof Error ? cause.message : String(cause));
+        setReady(true);
+        return;
+      }
       if (cancelled) return;
 
       if (DEMO) {
@@ -243,8 +261,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   signedOut.current = () => { void persistAccount(null); };
 
   const value = useMemo<AppContextValue>(
-    () => ({ db, api, account, ready, sync, revision, touch, signIn, signUp, signOut, syncNow }),
-    [db, api, account, ready, sync, revision, touch, signIn, signUp, signOut, syncNow],
+    () => ({ db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow }),
+    [db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
