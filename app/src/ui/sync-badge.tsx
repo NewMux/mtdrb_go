@@ -13,14 +13,16 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { useApp } from '@/state/app';
+import { DEMO, useApp } from '@/state/app';
 import { colors, radius, space, type as typography } from './theme';
 
 export function SyncBadge() {
   const { sync } = useApp();
   const router = useRouter();
 
-  const { label, tone } = describe(sync);
+  const { label, tone } = DEMO
+    ? { label: sync.pending > 0 ? `Demo · ${sync.pending} queued` : 'Demo · no server', tone: colors.warning }
+    : describe(sync);
 
   return (
     <Pressable

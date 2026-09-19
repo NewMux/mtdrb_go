@@ -165,3 +165,30 @@ bugs table in [STATUS.md](STATUS.md).
 | CORS errors in a browser | Add that exact origin to `CORS_ORIGINS` |
 | Today is empty | Nothing is booked for today — see step 4 |
 | Badge says "needs attention" | An operation was refused. Tap it: the reason is in plain words, with *Try again* or *Discard* |
+
+## Demo mode — no server at all
+
+```bash
+cd app
+EXPO_PUBLIC_DEMO=1 npx expo start
+```
+
+Seeds a practice into the device database on first launch — three clients, a
+day of sessions, packages, invoices, last week's training — and never calls the
+network. Useful for showing someone the app without standing up a backend.
+
+It is not a mock: every screen already reads local SQLite, so this is the real
+app with the sync engine idle. What it cannot do is anything the server
+decides. Credits are not really burned, revenue is not recognised and invoices
+are not settled — those happen in the ledger, behind the API. The screens say
+"waiting on the server" and nothing ever answers, which is exactly what a phone
+in a basement sees.
+
+To build it for hosting under a path:
+
+```bash
+EXPO_PUBLIC_DEMO=1 npx expo export --platform web --clear --output-dir dist
+```
+
+Set `expo.experiments.baseUrl` in `app.json` to the path it will be served
+from, or the router will 404 on load.

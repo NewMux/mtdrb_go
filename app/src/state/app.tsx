@@ -20,10 +20,21 @@ import { openDatabase } from '@/db';
 import { getMeta, setMeta, type Database } from '@/db/types';
 import { secureTokens } from '@/auth/tokens';
 import { synchronise, type SyncReport } from '@/sync/engine';
+import { DEMO_ACCOUNT, seedDemo } from '@/demo/seed';
 import * as outbox from '@/sync/outbox';
 
 /** How often a foregrounded app tries to drain the outbox. */
 const SYNC_INTERVAL_MS = 45_000;
+
+/**
+ * A build with no server behind it.
+ *
+ * Not a mock: every screen already reads local SQLite, so this is the real app
+ * with the sync engine idle. What it cannot do is anything the server decides
+ * — burn a credit, recognise revenue, settle an invoice — so those stay
+ * queued, exactly as they would on a phone with no signal.
+ */
+export const DEMO = process.env.EXPO_PUBLIC_DEMO === '1';
 
 const ACCOUNT_KEY = 'auth.account';
 const LAST_SYNC_KEY = 'sync.last_at';
@@ -118,6 +129,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const database = await openDatabase();
       if (cancelled) return;
 
+      if (DEMO) {
+        await seedDemo(database);
+        if (cancelled) return;
+        setDb(database);
+        setAccount(DEMO_ACCOUNT);
+        await refreshCounts(database);
+        setReady(true);
+        return;
+      }
+
       const stored = await getMeta(database, ACCOUNT_KEY);
       const lastSync = await getMeta(database, LAST_SYNC_KEY);
       const token = await secureTokens.refreshToken();
@@ -137,6 +158,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const syncNow = useCallback(async (): Promise<SyncReport | null> => {
     if (!db || !account) return null;
+    // Nothing to sync with. The outbox still fills up, which is the point:
+    // the badge shows what would be sent.
+    if (DEMO) {
+      const counts = await outbox.counts(db);
+      setSync((s) => ({ ...s, ...counts, running: false, offline: true, error: null }));
+      return null;
+    }
 
     setSync((s) => ({ ...s, running: true, error: null }));
     const report = await synchronise(db, api);
@@ -162,6 +190,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // likely to have walked back into signal.
   useEffect(() => {
     if (!db || !account) return;
+    if (DEMO) return;
 
     void syncNow();
     const timer = setInterval(() => { void syncNow(); }, SYNC_INTERVAL_MS);

@@ -14,7 +14,7 @@ import { ScrollView, View } from 'react-native';
 import * as outbox from '@/sync/outbox';
 import type { OutboxEntry } from '@/sync/outbox';
 import { ErrorCode } from '@/api/types';
-import { useApp } from '@/state/app';
+import { DEMO, useApp } from '@/state/app';
 import {
   Banner, Body, Button, Caption, Card, Empty, Heading, Row, Screen, Spacer, Title,
 } from '@/ui/components';
@@ -60,6 +60,16 @@ export default function SyncScreen() {
         </Caption>
 
         <Spacer size={space.lg} />
+
+        {DEMO ? (
+          <>
+            <Banner
+              message={"This build has no server behind it. Everything you do is written to this device and queued \u2014 but nothing can be sent, so credits are not really burned, revenue is not recognised and invoices are not settled. That all happens in the ledger, behind an API."}
+              tone="warning"
+            />
+            <Spacer />
+          </>
+        ) : null}
 
         <Card>
           <Row style={{ justifyContent: 'space-between' }}>
