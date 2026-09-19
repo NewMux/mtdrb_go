@@ -292,3 +292,74 @@ describe('synchronise', () => {
     expect(report.error).toBeUndefined();
   });
 });
+
+describe('what a push reveals', () => {
+  it('pulls again when the push changed something on the server', async () => {
+    // A recorded payment settles an invoice, a marked attendance burns a
+    // credit — and the server only decides that during the push. The pull
+    // happens first, so without a second one the trainer taps "Mark as paid"
+    // and the invoice sits there looking unpaid until the next interval.
+    const db = new MemoryDatabase();
+    try {
+      await db.execute(
+        `INSERT INTO clients (id, full_name, status, notes) VALUES ('c1','Dana','active','')`,
+      );
+      await outbox.enqueue(db, 'op1', 'payment.record', { invoice_id: 'i1' });
+
+      const pulls: string[] = [];
+      const stub = stubFetch((url) => {
+        if (url.includes('/sync/pull')) {
+          pulls.push(url);
+          return {
+            status: 200,
+            body: { cursor: `c${pulls.length}`, changes: [], has_more: false, server_time: 'now' },
+          };
+        }
+        return {
+          status: 200,
+          body: {
+            results: [{ id: 'op1', type: 'payment.record', status: 'applied' }],
+            applied: 1, conflicts: 0, rejected: 0, cursor: 'c9',
+          },
+        };
+      });
+      const api = new ApiClient({
+        baseUrl: 'https://api.test', tokens: memoryTokens(), fetchImpl: stub.fetch,
+      });
+
+      const report = await synchronise(db, api);
+      expect(report.pushed).toBe(1);
+      expect(pulls).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('does not pull twice when the outbox was empty', async () => {
+    // Nothing was sent, so nothing new can have happened. A second round trip
+    // on every idle tick is a phone radio waking up for no reason.
+    const db = new MemoryDatabase();
+    try {
+      const pulls: string[] = [];
+      const stub = stubFetch((url) => {
+        if (url.includes('/sync/pull')) {
+          pulls.push(url);
+          return {
+            status: 200,
+            body: { cursor: 'c1', changes: [], has_more: false, server_time: 'now' },
+          };
+        }
+        throw new Error('push should not have been called');
+      });
+      const api = new ApiClient({
+        baseUrl: 'https://api.test', tokens: memoryTokens(), fetchImpl: stub.fetch,
+      });
+
+      await synchronise(db, api);
+      expect(pulls).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+

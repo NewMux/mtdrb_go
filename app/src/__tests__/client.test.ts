@@ -100,3 +100,54 @@ describe('ApiClient', () => {
     expect(headers['Idempotency-Key']).toBe('outbox-key-0001');
   });
 });
+
+describe('the default fetch', () => {
+  it('is called without the client as its receiver', async () => {
+    // A browser refuses `fetch` invoked with anything but the window as its
+    // receiver, so holding the global in a field and calling it as a method
+    // throws "Illegal invocation" — in a browser only. Node does not care,
+    // which is exactly why this went unnoticed until the web build could not
+    // reach the server at all.
+    const original = globalThis.fetch;
+    const receivers: unknown[] = [];
+    try {
+      globalThis.fetch = function (this: unknown) {
+        receivers.push(this);
+        return Promise.resolve(new Response('{}', {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        }));
+      } as unknown as typeof fetch;
+
+      const api = new ApiClient({ baseUrl: 'https://api.test', tokens: memoryTokens() });
+      await api.get('/v1/receivables');
+
+      expect(receivers).toHaveLength(1);
+      expect(receivers[0]).not.toBeInstanceOf(ApiClient);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('resolves the global at call time rather than at construction', async () => {
+    // Capturing the reference in the constructor is the same mistake wearing a
+    // different hat: it also makes the client unmockable after it is built.
+    const original = globalThis.fetch;
+    try {
+      const api = new ApiClient({ baseUrl: 'https://api.test', tokens: memoryTokens() });
+
+      let called = false;
+      globalThis.fetch = (() => {
+        called = true;
+        return Promise.resolve(new Response('{}', {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        }));
+      }) as unknown as typeof fetch;
+
+      await api.get('/v1/receivables');
+      expect(called).toBe(true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
+

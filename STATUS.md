@@ -6,7 +6,7 @@
 end to end: the client's own sync engine, outbox and API client driven against
 a running server, not against each other's stubs.
 
-That last step mattered. It found four bugs in a system whose two halves each
+That last step mattered. It found five bugs in a system whose two halves each
 had a green test suite. See [the bugs table](#bugs-the-tests-caught).
 
 To run it yourself: [RUNNING.md](RUNNING.md).
@@ -15,7 +15,7 @@ To run it yourself: [RUNNING.md](RUNNING.md).
 |---|---|
 | Milestones done | 8 of 8 |
 | Server tests | 186, green under `-race` |
-| Client tests | 72 offline, plus 7 against a live server |
+| Client tests | 74 offline, plus 7 against a live server |
 | Production Go | ~12,700 lines |
 | Test Go | ~7,400 lines |
 | Migrations | 7, each verified to roll back and reapply |
@@ -222,7 +222,7 @@ Worth recording, because each was a real defect in shipped-looking code:
 | M7 | A single global sync cursor advanced past rows in other collections — data would have **silently never synced** |
 | M7 | `withTransactionAsync` resolves to `void`, so the driver's `transaction()` returned undefined where callers expected a value |
 
-### The four the live run caught
+### The five the live run caught
 
 Running the client against a real server for the first time found these. Every
 one had passed both suites, because each side's tests asserted a wire format
@@ -237,9 +237,16 @@ real push.
 | Offline-minted ids were discarded for workouts, clients, sets and measurements, so sets pushed in the same batch referenced a workout the server had never heard of | The integration test pushed **twice**, reading the server's id out of the first response — shaped around the flaw instead of exposing it. A real outbox drains in one batch |
 | Sets came back from a pull under a different id and appeared **twice** on the floor logger, for ever | The server upserts sets on their natural key, so the server was consistent; only the device accumulated the duplicates |
 | Selling a ten-session pack granted **100 credits**, and set revenue recognition to a tenth of the real price — so Deferred Revenue would never drain | `package_credits` is credits *per unit* and multiplies with quantity. The client test asserted the shape the client sent rather than what the server does with it |
+| The web build could not make **a single network request**: `ApiClient` held `fetch` in a field and called it as a method, which a browser rejects as an illegal invocation | Every client test injects a `fetchImpl` stub, so the default path was never taken; the live test runs in Node, whose `fetch` does not care about its receiver. Only a real browser fails — and it surfaced as "No connection", so the app just looked permanently offline |
 
-The last one is the one that matters most: it corrupts the ledger, quietly,
-which is the single thing this product exists to get right.
+The credits one matters most: it corrupts the ledger, quietly, which is the
+single thing this product exists to get right.
+
+Driving the real UI in a browser also showed `synchronise` pulling *before*
+pushing and then stopping — so a recorded payment left the invoice looking
+unpaid until the next interval, up to 45 seconds later. It now pulls again
+when a push changed something, because that is when the server decides
+anything.
 
 Two design self-corrections mid-build: `MarkDay` originally skipped
 out-of-credit clients silently (a trainer would believe it worked); the credit

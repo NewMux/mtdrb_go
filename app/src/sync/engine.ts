@@ -203,6 +203,18 @@ export async function synchronise(db: Database, api: ApiClient): Promise<SyncRep
     report.pushed = pushed.pushed;
     report.conflicts = pushed.conflicts;
     report.rejected = pushed.rejected;
+
+    // Pull again when the push changed anything.
+    //
+    // The push is what makes the server decide: a recorded payment settles an
+    // invoice, a marked attendance burns a credit. Those answers exist only
+    // after the push, and the pull above already happened — so without this
+    // the trainer taps "Mark as paid", the queue drains, and the invoice sits
+    // there looking unpaid until the next interval. Long enough to tap it
+    // again.
+    if (pushed.pushed > 0) {
+      report.pulled += await pull(db, api);
+    }
   } catch (error) {
     if (error instanceof NetworkError) {
       // Being offline is the normal case this app is built for, not a failure

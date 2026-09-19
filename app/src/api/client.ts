@@ -67,7 +67,14 @@ export class ApiClient {
   private refreshing: Promise<boolean> | null = null;
 
   constructor(private readonly options: ClientOptions) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // Wrapped, not captured. `fetch` held in a field and then called as
+    // `this.fetchImpl(...)` is invoked with the client as its receiver, and a
+    // browser rejects that: "Failed to execute 'fetch' on 'Window': Illegal
+    // invocation". Node's fetch does not care, so every test passed while the
+    // web build could not make a single request — and because the failure
+    // arrives as a rejected promise, the app reported it as "No connection"
+    // and simply looked offline for ever.
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
   }
 
   async request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
