@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { recordPayment } from '@/features/actions';
@@ -21,7 +21,7 @@ import { outstandingInvoices, type InvoiceSummary } from '@/features/queries';
 import type { PaymentInstrument } from '@/api/types';
 import { useApp, useQuery } from '@/state/app';
 import {
-  Body, Button, Caption, Card, Empty, Field, Heading, Metric, NumberField,
+  Body, Button, Caption, Card, Empty, Field, Label, Metric, NumberField,
   Row, Screen, SegmentedChoice, Spacer, Title,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
@@ -91,7 +91,7 @@ export default function MoneyScreen() {
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
+        contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: 176 }}
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
@@ -110,21 +110,26 @@ export default function MoneyScreen() {
         </Row>
 
         <Spacer size={space.lg} />
-        <Card>
+        <Card tone="accent">
           {totals.length === 0 ? (
-            <Metric value={money(0, fallbackCurrency)} label="owed to you" />
+            <Metric value="0.00" unit={fallbackCurrency} label="owed to you" tone="onAccent" />
           ) : (
             totals.map(([currency, minor]) => (
               <View key={currency} style={{ marginBottom: space.sm }}>
-                <Metric value={money(minor, currency)} label="owed to you" />
+                <Metric
+                  value={money(minor, currency).replace(` ${currency}`, '')}
+                  unit={currency}
+                  label="owed to you"
+                  tone="onAccent"
+                />
               </View>
             ))
           )}
         </Card>
 
-        <Spacer size={space.lg} />
-        <Heading>Awaiting payment</Heading>
-        <Spacer size={space.sm} />
+        <Spacer size={space.xl} />
+        <Label>Awaiting payment</Label>
+        <Spacer />
 
         {rows.length === 0 ? (
           <Empty
@@ -139,7 +144,14 @@ export default function MoneyScreen() {
             const late = label.endsWith('overdue');
 
             return (
-              <Card key={invoice.id} style={{ marginBottom: space.sm }}>
+              <Pressable
+                key={invoice.id}
+                accessibilityRole="button"
+                accessibilityLabel={`${invoice.clientName}, ${money(balance, currency)} outstanding`}
+                onPress={() => expand(invoice)}
+                style={{ marginBottom: space.md }}
+              >
+              <Card>
                 <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <View style={{ flex: 1 }}>
                     <Body>{invoice.clientName}</Body>
@@ -157,13 +169,6 @@ export default function MoneyScreen() {
                     ) : null}
                   </View>
                 </Row>
-
-                <Spacer size={space.sm} />
-                <Button
-                  label={open === invoice.id ? 'Close' : 'Mark as paid'}
-                  tone={open === invoice.id ? 'quiet' : 'default'}
-                  onPress={() => expand(invoice)}
-                />
 
                 {open === invoice.id ? (
                   <>
@@ -195,6 +200,7 @@ export default function MoneyScreen() {
                   </>
                 ) : null}
               </Card>
+              </Pressable>
             );
           })
         )}

@@ -123,6 +123,17 @@ describe('actions', () => {
       expect(sets.every((s) => s.completed === 0)).toBe(true);
     });
 
+    it('numbers the cloned sets from one', async () => {
+      await lastWeek();
+      const workout = await startWorkout(db, 'c1');
+      await cloneLastSession(db, workout, 'c1', 'e1');
+
+      // Last week's working sets were indices 2 and 3 — index 1 was the
+      // warm-up, which is not cloned. Carrying the indices across opened a
+      // fresh workout at "set 2".
+      expect((await workoutSets(db, workout)).map((s) => s.setIndex)).toEqual([1, 2]);
+    });
+
     it('skips the warm-up, so a light opener is not next week’s working weight', async () => {
       await lastWeek();
       const workout = await startWorkout(db, 'c1');

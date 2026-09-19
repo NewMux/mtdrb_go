@@ -12,7 +12,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { listClients } from '@/features/queries';
 import { useApp, useQuery } from '@/state/app';
 import {
-  Body, Button, Caption, Card, Empty, Field, Row, Screen, Spacer, Title,
+  Body, Caption, Card, Chip, Empty, Field, Label, Row, Screen, Spacer, Title,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
 import { space } from '@/ui/theme';
@@ -30,7 +30,7 @@ export default function ClientsScreen() {
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
+        contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: 176 }}
         keyboardShouldPersistTaps="handled"
       >
         <Row style={{ justifyContent: 'space-between' }}>
@@ -49,14 +49,14 @@ export default function ClientsScreen() {
           placeholder="Name, email or phone"
           autoCapitalize="none"
         />
-        <Spacer size={space.sm} />
-        <Button label="Add client" onPress={() => router.push('/client/new')} />
+        <Spacer size={space.xl} />
+        <Label>{search ? 'Matches' : 'Everyone'}</Label>
         <Spacer />
 
         {rows.length === 0 ? (
           <Empty
             title={search ? 'Nobody matches' : 'No clients yet'}
-            detail={search ? 'Try a different search.' : 'Add your first client to get started.'}
+            detail={search ? 'Try a different search.' : 'Tap + below to add your first client.'}
           />
         ) : (
           rows.map((client) => (
@@ -73,9 +73,15 @@ export default function ClientsScreen() {
                     <Body>{client.fullName}</Body>
                     <Caption>{client.email ?? client.phone ?? client.status}</Caption>
                   </View>
-                  <Caption tone={creditTone(client.creditsRemaining)}>
-                    {creditLabel(client.creditsRemaining)}
-                  </Caption>
+                  <Row style={{ gap: space.sm }}>
+                    <Caption tone={creditTone(client.creditsRemaining)}>
+                      {creditLabel(client.creditsRemaining)}
+                    </Caption>
+                    <Chip
+                      label={String(client.creditsRemaining)}
+                      tone={client.creditsRemaining > 0 ? 'accent' : 'danger'}
+                    />
+                  </Row>
                 </Row>
               </Card>
             </Pressable>

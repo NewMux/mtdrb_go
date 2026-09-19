@@ -62,10 +62,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: space.sm,
     borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
     backgroundColor: colors.surfaceRaised,
   },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  label: { ...typography.caption, color: colors.ink },
+  dot: { width: 7, height: 7, borderRadius: radius.pill },
+  label: { ...typography.caption, color: colors.inkMuted },
 });

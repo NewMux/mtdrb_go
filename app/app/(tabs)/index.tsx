@@ -19,11 +19,12 @@ import { openWorkout, todaysRoster, type RosterEntry } from '@/features/queries'
 import type { AttendanceStatus } from '@/api/types';
 import { useApp, useQuery } from '@/state/app';
 import {
-  Body, Button, Caption, Card, Empty, Pill, Row, Screen, Spacer, Title,
+  Body, Button, Caption, Card, Chip, Empty, Heading, Label, Metric,
+  Pill, Row, Screen, Spacer, Title,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
 import { clockTime } from '@/ui/format';
-import { colors, space, type as typography } from '@/ui/theme';
+import { colors, radius, space, type as typography } from '@/ui/theme';
 
 const OUTCOMES: { status: AttendanceStatus; label: string }[] = [
   { status: 'completed', label: 'Completed' },
@@ -33,7 +34,7 @@ const OUTCOMES: { status: AttendanceStatus; label: string }[] = [
 ];
 
 export default function TodayScreen() {
-  const { db, touch, syncNow, sync } = useApp();
+  const { db, account, touch, syncNow, sync } = useApp();
   const router = useRouter();
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -92,12 +93,13 @@ export default function TodayScreen() {
   };
 
   const entries = roster.data ?? [];
-  const remaining = entries.filter((e) => e.status === 'scheduled').length;
+  const marked = entries.filter((e) => e.status !== 'scheduled').length;
+  const firstName = (account?.display_name ?? '').split(' ')[0] || 'there';
 
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
+        contentContainerStyle={styles.scroll}
         refreshControl={
           <RefreshControl
             refreshing={sync.running}
@@ -107,23 +109,55 @@ export default function TodayScreen() {
         }
       >
         <Row style={{ justifyContent: 'space-between' }}>
-          <View>
-            <Title>{new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</Title>
-            <Caption>
-              {entries.length === 0
-                ? 'Nothing booked'
-                : `${entries.length} booked · ${remaining} still to mark`}
-            </Caption>
-          </View>
+          <Row>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarGlyph}>{firstName.slice(0, 1).toUpperCase()}</Text>
+            </View>
+            <View>
+              <Title>Hello {firstName}</Title>
+              <Caption>
+                {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
+              </Caption>
+            </View>
+          </Row>
           <SyncBadge />
         </Row>
 
-        <Spacer size={space.lg} />
+        <Spacer size={space.xl} />
+
+        {/* The day at a glance. Lime because getting through the roster is the
+            job this screen exists for. */}
+        <Card tone="accent">
+          <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <Metric
+              value={String(marked)}
+              unit={`/ ${entries.length}`}
+              label="sessions marked"
+              tone="onAccent"
+            />
+            <Heading onAccent>
+              {entries.length === 0 ? 'Clear day' : marked === entries.length ? 'All done' : `${entries.length - marked} to go`}
+            </Heading>
+          </Row>
+          <Spacer />
+          <View style={styles.progressOnAccent}>
+            <View
+              style={[
+                styles.progressOnAccentFill,
+                { width: `${entries.length === 0 ? 0 : (marked / entries.length) * 100}%` },
+              ]}
+            />
+          </View>
+        </Card>
+
+        <Spacer size={space.xl} />
+        <Label>Roster</Label>
+        <Spacer />
 
         {entries.length === 0 ? (
           <Empty
-            title="A clear day"
-            detail={roster.loading ? 'Loading…' : 'Nothing is booked. Sessions appear here as they sync.'}
+            title="Nothing booked"
+            detail={roster.loading ? 'Loading…' : 'Sessions appear here as they sync.'}
           />
         ) : (
           entries.map((entry) => (
@@ -136,23 +170,22 @@ export default function TodayScreen() {
                 <Card>
                   <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <View style={{ flex: 1 }}>
-                      <Row>
+                      <Row style={{ gap: space.md }}>
                         <Text style={styles.time}>{clockTime(entry.startsAt)}</Text>
                         <Text style={styles.name} numberOfLines={1}>{entry.clientName}</Text>
                       </Row>
-                      <Spacer size={space.xs} />
-                      <Caption>
-                        {[entry.sessionTypeName, entry.location].filter(Boolean).join(' · ') || 'Session'}
-                      </Caption>
+                      <Spacer size={space.sm} />
+                      <Row style={{ gap: space.sm }}>
+                        <StatusPill status={entry.status} />
+                        <Caption>
+                          {[entry.sessionTypeName, entry.location].filter(Boolean).join(' · ') || 'Session'}
+                        </Caption>
+                      </Row>
                     </View>
-                    <View style={{ alignItems: 'flex-end', gap: space.xs }}>
-                      <StatusPill status={entry.status} />
-                      <Caption tone={entry.creditsRemaining > 0 ? 'muted' : 'warning'}>
-                        {entry.creditsRemaining > 0
-                          ? `${entry.creditsRemaining} credit${entry.creditsRemaining === 1 ? '' : 's'}`
-                          : 'no credits'}
-                      </Caption>
-                    </View>
+                    <Chip
+                      label={entry.creditsRemaining > 0 ? `${entry.creditsRemaining}` : '0'}
+                      tone={entry.creditsRemaining > 0 ? 'accent' : 'danger'}
+                    />
                   </Row>
 
                   {expanded === entry.attendeeId ? (
@@ -213,12 +246,33 @@ function StatusPill({ status }: { status: AttendanceStatus }) {
     case 'no_show': return <Pill label="No-show" tone="danger" />;
     case 'late_cancel': return <Pill label="Late cancel" tone="warning" />;
     case 'early_cancel': return <Pill label="Early cancel" tone="muted" />;
-    default: return <Pill label="Scheduled" tone="accent" />;
+    default: return <Pill label="Scheduled" tone="muted" />;
   }
 }
 
 const styles = StyleSheet.create({
-  time: { ...typography.heading, color: colors.accent, minWidth: 52 },
+  // Bottom padding clears the tab bar and the circle straddling it.
+  scroll: { padding: space.lg, paddingTop: space.xl, paddingBottom: 176 },
+
+  avatar: {
+    width: 46,
+    height: 46,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarGlyph: { ...typography.title, color: colors.onAccent },
+
+  progressOnAccent: {
+    height: 8,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(18,18,18,0.18)',
+    overflow: 'hidden',
+  },
+  progressOnAccentFill: { height: '100%', borderRadius: radius.pill, backgroundColor: colors.onAccent },
+
+  time: { ...typography.heading, color: colors.inkMuted, minWidth: 48 },
   name: { ...typography.title, color: colors.ink, flexShrink: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   gridItem: { flexGrow: 1, flexBasis: '45%' },

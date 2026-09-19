@@ -326,8 +326,12 @@ export async function cloneLastSession(
 ): Promise<number> {
   const previous = await previousSets(db, clientId, exerciseId, workoutId);
 
+  // Renumbered from one rather than copied. Last session's warm-up held index
+  // 1, so carrying the indices across opened a fresh workout at "set 2".
+  let index = 0;
   for (const set of previous) {
-    await logSet(db, workoutId, exerciseId, set.setIndex, {
+    index += 1;
+    await logSet(db, workoutId, exerciseId, index, {
       reps: set.reps,
       loadGrams: set.loadGrams,
       rpeTenths: set.rpeTenths,

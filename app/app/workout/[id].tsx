@@ -23,7 +23,7 @@ import {
 import { useApp, useQuery } from '@/state/app';
 import {
   Body, Button, Caption, Card, Empty, Field, Heading, NumberField,
-  Row, Screen, Spacer, Title,
+  Row, Screen, Spacer, TextButton, Title,
 } from '@/ui/components';
 import { load as formatLoad, parseLoad, parseReps, parseRpe, rpe as formatRpe } from '@/ui/format';
 import { colors, radius, space, type as typography } from '@/ui/theme';
@@ -37,7 +37,7 @@ export default function WorkoutScreen() {
   const { db, touch, syncNow } = useApp();
   const router = useRouter();
 
-  const [exerciseId, setExerciseId] = useState<string | null>(null);
+  const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
   const [picking, setPicking] = useState(false);
   const [search, setSearch] = useState('');
   const [reps, setReps] = useState('');
@@ -45,12 +45,6 @@ export default function WorkoutScreen() {
   const [rpeInput, setRpeInput] = useState('');
 
   const sets = useQuery((database) => workoutSets(database, workoutId), [workoutId]);
-  const last = useQuery(
-    (database) => (exerciseId && clientId
-      ? previousSets(database, clientId, exerciseId, workoutId)
-      : Promise.resolve([] as LoggedSet[])),
-    [exerciseId, clientId, workoutId],
-  );
   const results = useQuery(
     (database) => (picking ? searchExercises(database, search, 30) : Promise.resolve([])),
     [picking, search],
@@ -58,14 +52,28 @@ export default function WorkoutScreen() {
 
   const all = sets.data ?? [];
 
-  /** The exercises already touched in this workout, in the order they appear. */
+  /**
+   * The exercises in play: those already logged against, plus one just picked.
+   *
+   * The picked one has to be here explicitly. Deriving the list from the sets
+   * alone meant an exercise chosen but not yet logged had no chip and no name,
+   * so the card above the keypad read "Exercise" until the first set landed.
+   */
   const inWorkout = useMemo(() => {
     const seen = new Map<string, string>();
     for (const set of all) if (!seen.has(set.exerciseId)) seen.set(set.exerciseId, set.exerciseName);
+    if (picked && !seen.has(picked.id)) seen.set(picked.id, picked.name);
     return [...seen].map(([id, name]) => ({ id, name }));
-  }, [all]);
+  }, [all, picked]);
 
-  const current = exerciseId ?? inWorkout[0]?.id ?? null;
+  const current = picked?.id ?? inWorkout[0]?.id ?? null;
+  const last = useQuery(
+    (database) => (current && clientId
+      ? previousSets(database, clientId, current, workoutId)
+      : Promise.resolve([] as LoggedSet[])),
+    [current, clientId, workoutId],
+  );
+
   const currentSets = all.filter((s) => s.exerciseId === current);
   const currentName = inWorkout.find((e) => e.id === current)?.name ?? '';
   const nextIndex = currentSets.reduce((max, s) => Math.max(max, s.setIndex), 0) + 1;
@@ -119,8 +127,8 @@ export default function WorkoutScreen() {
     router.back();
   };
 
-  const pick = (id: string) => {
-    setExerciseId(id);
+  const pick = (id: string, name: string) => {
+    setPicked({ id, name });
     setPicking(false);
     setSearch('');
     setReps('');
@@ -146,7 +154,7 @@ export default function WorkoutScreen() {
                 key={exercise.id}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: exercise.id === current }}
-                onPress={() => { setExerciseId(exercise.id); setPicking(false); }}
+                onPress={() => { setPicked(exercise); setPicking(false); }}
                 style={[styles.chip, exercise.id === current && styles.chipActive]}
               >
                 <Text style={[styles.chipLabel, exercise.id === current && styles.chipLabelActive]}>
@@ -181,7 +189,7 @@ export default function WorkoutScreen() {
               <Pressable
                 key={exercise.id}
                 accessibilityRole="button"
-                onPress={() => pick(exercise.id)}
+                onPress={() => pick(exercise.id, exercise.name)}
                 style={({ pressed }) => [styles.result, pressed && { opacity: 0.6 }]}
               >
                 <Body>{exercise.name}</Body>
@@ -203,7 +211,7 @@ export default function WorkoutScreen() {
               <Row style={{ justifyContent: 'space-between' }}>
                 <Heading>{currentName || 'Exercise'}</Heading>
                 {(last.data ?? []).length > 0 ? (
-                  <Button label="Repeat last session" onPress={() => { void clone(); }} />
+                  <TextButton label="Repeat last time" onPress={() => { void clone(); }} />
                 ) : null}
               </Row>
 

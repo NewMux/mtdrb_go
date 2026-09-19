@@ -15,8 +15,8 @@ import {
 } from '@/features/queries';
 import { useApp, useQuery } from '@/state/app';
 import {
-  Body, Button, Caption, Card, Heading, Metric, NumberField,
-  Row, Screen, Spacer, Title,
+  Body, Button, Caption, Card, Divider, Label, Metric, NumberField,
+  Row, Screen, Spacer, TextButton, Title,
 } from '@/ui/components';
 import {
   bodyFat as formatBodyFat, dueLabel, load as formatLoad, money,
@@ -93,7 +93,7 @@ export default function ClientScreen() {
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
+        contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl * 2 }}
         keyboardShouldPersistTaps="handled"
       >
         <Title>{profile.fullName}</Title>
@@ -101,30 +101,40 @@ export default function ClientScreen() {
 
         <Spacer size={space.lg} />
 
-        <Card>
+        <Card tone="accent">
           <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <Metric
               value={String(profile.creditsRemaining)}
-              label={profile.creditsRemaining < 0 ? 'credits overdrawn' : 'credits remaining'}
+              unit={profile.creditsRemaining === 1 ? 'session' : 'sessions'}
+              label={profile.creditsRemaining < 0 ? 'overdrawn' : 'left on their pack'}
+              tone="onAccent"
             />
-            {profile.nextExpiry ? <Caption tone="warning">expires {shortDate(profile.nextExpiry)}</Caption> : null}
+            {profile.nextExpiry ? <Caption tone="onAccent">expires {shortDate(profile.nextExpiry)}</Caption> : null}
           </Row>
-          <Spacer />
+        </Card>
+
+        <Spacer />
+        <Row>
           <Button
-            label="Sell a package"
+            label="Start a workout"
+            tone={profile.creditsRemaining > 0 ? 'primary' : 'default'}
+            style={{ flex: 1 }}
+            onPress={() => { void train(); }}
+          />
+          <Button
+            label="Sell a pack"
             tone={profile.creditsRemaining <= 0 ? 'primary' : 'default'}
+            style={{ flex: 1 }}
             onPress={() => router.push({
               pathname: '/sell-package',
               params: { client: profile.id, name: profile.fullName },
             })}
           />
-          <Spacer size={space.sm} />
-          <Button label="Start a workout" onPress={() => { void train(); }} />
-        </Card>
+        </Row>
 
-        <Spacer size={space.lg} />
-        <Heading>Owing</Heading>
-        <Spacer size={space.sm} />
+        <Spacer size={space.xl} />
+        <Label>Owing</Label>
+        <Spacer />
         {(invoices.data ?? []).length === 0 ? (
           <Caption>Nothing outstanding.</Caption>
         ) : (
@@ -145,12 +155,8 @@ export default function ClientScreen() {
 
         <Spacer size={space.lg} />
         <Row style={{ justifyContent: 'space-between' }}>
-          <Heading>Measurements</Heading>
-          <Button
-            label={weighing ? 'Cancel' : 'Record'}
-            tone="quiet"
-            onPress={() => setWeighing(!weighing)}
-          />
+          <Label>Measurements</Label>
+          <TextButton label={weighing ? 'Cancel' : 'Record'} onPress={() => setWeighing(!weighing)} />
         </Row>
         <Spacer size={space.sm} />
 
@@ -175,31 +181,41 @@ export default function ClientScreen() {
         ) : (
           <>
             <Spacer size={space.sm} />
-            {(measurements.data ?? []).map((entry) => (
-              <Row key={entry.id} style={{ justifyContent: 'space-between', paddingVertical: space.sm }}>
-                <Caption>{shortDate(entry.measuredOn)}</Caption>
-                <Body>{formatLoad(entry.weightGrams)}</Body>
-                <Caption>{formatBodyFat(entry.bodyFatBP)}</Caption>
-              </Row>
-            ))}
+            <Card>
+              {(measurements.data ?? []).map((entry, i) => (
+                <View key={entry.id}>
+                  {i > 0 ? <Divider /> : null}
+                  <Row style={{ justifyContent: 'space-between', paddingVertical: space.md }}>
+                    <Caption>{shortDate(entry.measuredOn)}</Caption>
+                    <Body>{formatLoad(entry.weightGrams)}</Body>
+                    <Caption>{formatBodyFat(entry.bodyFatBP)}</Caption>
+                  </Row>
+                </View>
+              ))}
+            </Card>
           </>
         )}
 
-        <Spacer size={space.lg} />
-        <Heading>Recent training</Heading>
-        <Spacer size={space.sm} />
+        <Spacer size={space.xl} />
+        <Label>Recent training</Label>
+        <Spacer />
         {(workouts.data ?? []).length === 0 ? (
           <Caption>No workouts logged yet.</Caption>
         ) : (
-          (workouts.data ?? []).map((workout) => (
-            <Row key={workout.id} style={{ justifyContent: 'space-between', paddingVertical: space.sm }}>
-              <Caption>{shortDate(workout.performedOn)}</Caption>
-              <Body>{workout.setCount} sets</Body>
-              <Caption>
-                {workout.volumeGrams > 0 ? `${Math.round(workout.volumeGrams / 1000)} kg moved` : workout.status}
-              </Caption>
-            </Row>
-          ))
+          <Card>
+            {(workouts.data ?? []).map((workout, i) => (
+              <View key={workout.id}>
+                {i > 0 ? <Divider /> : null}
+                <Row style={{ justifyContent: 'space-between', paddingVertical: space.md }}>
+                  <Caption>{shortDate(workout.performedOn)}</Caption>
+                  <Body>{workout.setCount} sets</Body>
+                  <Caption>
+                    {workout.volumeGrams > 0 ? `${Math.round(workout.volumeGrams / 1000)} kg moved` : workout.status}
+                  </Caption>
+                </Row>
+              </View>
+            ))}
+          </Card>
         )}
       </ScrollView>
     </Screen>
