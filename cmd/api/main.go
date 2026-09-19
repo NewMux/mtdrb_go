@@ -13,6 +13,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
+	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
 	"github.com/NewMux/mtdrb_go/internal/media"
@@ -98,6 +99,7 @@ func run() error {
 			Billing:     billingSvc,
 			Programming: programmingSvc,
 		}),
+		Dashboard:   dashboard.NewHandler(dashboard.NewService(billingSvc, ledgerSvc, wall), pool),
 		TokenIssuer: issuer,
 	})
 

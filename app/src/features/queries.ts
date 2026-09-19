@@ -73,6 +73,52 @@ export async function listClients(db: Database, search = ''): Promise<ClientSumm
   );
 }
 
+export interface LowBalanceClient {
+  id: string;
+  fullName: string;
+  creditsRemaining: number;
+  nextExpiry: string | null;
+  lastSessionOn: string | null;
+}
+
+/**
+ * Clients at or under a credit threshold — the renewal list.
+ *
+ * Computed on the device as well as the server, unlike the rest of the
+ * dashboard. The numbers beside it (revenue, receivables) are ledger
+ * arithmetic and are meaningless stale, but this one drives a conversation
+ * held standing next to the person it concerns, which is exactly where the
+ * signal is worst.
+ *
+ * Ordered by who runs out first. A client with no pack at all counts as zero
+ * and belongs here: they are the plainest renewal of the lot.
+ */
+export async function lowBalanceClients(
+  db: Database, threshold = 2,
+): Promise<LowBalanceClient[]> {
+  return db.select<LowBalanceClient>(
+    `SELECT c.id, c.full_name AS fullName,
+            coalesce((SELECT sum(p.credits_remaining) FROM packages p
+                       WHERE p.client_id = c.id
+                         AND p.status IN ('active','exhausted')
+                         AND p.credits_remaining <> 0), 0) AS creditsRemaining,
+            (SELECT min(p.expires_at) FROM packages p
+               WHERE p.client_id = c.id AND p.status = 'active'
+                 AND p.credits_remaining > 0 AND p.expires_at IS NOT NULL) AS nextExpiry,
+            (SELECT max(s.starts_at) FROM session_attendees sa
+               JOIN sessions s ON s.id = sa.session_id
+              WHERE sa.client_id = c.id AND sa.status = 'completed') AS lastSessionOn
+       FROM clients c
+      WHERE c.deleted_at IS NULL AND c.status = 'active'
+        AND coalesce((SELECT sum(p.credits_remaining) FROM packages p
+                       WHERE p.client_id = c.id
+                         AND p.status IN ('active','exhausted')
+                         AND p.credits_remaining <> 0), 0) <= ?
+      ORDER BY creditsRemaining, nextExpiry IS NULL, nextExpiry, c.full_name`,
+    [threshold],
+  );
+}
+
 export interface LoggedSet {
   id: string;
   exerciseId: string;

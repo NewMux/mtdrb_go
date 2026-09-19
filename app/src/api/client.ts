@@ -7,7 +7,9 @@
  * screen because a fifteen-minute token lapsed.
  */
 
-import type { ApiErrorBody, PullResult, PushOperation, PushResult, SessionResponse } from './types';
+import type {
+  ApiErrorBody, DashboardSummary, PullResult, PushOperation, PushResult, SessionResponse,
+} from './types';
 
 /** An error carrying the server's machine code. */
 export class ApiError extends Error {
@@ -213,6 +215,10 @@ export class ApiClient {
 
   get<T>(path: string): Promise<T> {
     return this.request<T>(path);
+  }
+
+  dashboard(): Promise<DashboardSummary> {
+    return this.request<DashboardSummary>('/v1/dashboard');
   }
 
   post<T>(path: string, body: unknown, idempotencyKey?: string): Promise<T> {

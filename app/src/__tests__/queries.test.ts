@@ -1,7 +1,7 @@
 import { MemoryDatabase } from './support';
 import {
   todaysRoster, listClients, previousSets, outstandingInvoices,
-  biometricHistory, clientDetail, openWorkout, recentWorkouts,
+  biometricHistory, clientDetail, openWorkout, recentWorkouts, lowBalanceClients,
 } from '@/features/queries';
 
 async function seed(db: MemoryDatabase) {
@@ -165,5 +165,41 @@ describe('local queries', () => {
     const history = await biometricHistory(db, 'c1');
     expect(history.map((b) => b.id)).toEqual(['b2', 'b1']);
     expect(history[0]?.weightGrams).toBe(82400);
+  });
+
+  describe('the renewal list', () => {
+    it('lists whoever is nearly out, emptiest first', async () => {
+      // c1 has 7 from the seed. Give c2 one, and add someone with none.
+      await db.execute(`INSERT INTO packages (id, client_id, credits_remaining, status)
+        VALUES ('p2','c2',1,'active')`);
+      await db.execute(`INSERT INTO clients (id, full_name, status, notes)
+        VALUES ('c3','Never Bought','active','')`);
+
+      const low = await lowBalanceClients(db, 2);
+      expect(low.map((c) => c.fullName)).toEqual(['Never Bought', 'Morgan Hale']);
+      expect(low[0]?.creditsRemaining).toBe(0);
+      expect(low[1]?.creditsRemaining).toBe(1);
+    });
+
+    it('leaves a client with credits alone', async () => {
+      // Dana has 7 from the seed, well clear of the threshold.
+      const low = await lowBalanceClients(db, 2);
+      expect(low.map((c) => c.fullName)).not.toContain('Dana Rivers');
+    });
+
+    it('shows an overdrawn client as negative rather than zero', async () => {
+      await db.execute(`INSERT INTO packages (id, client_id, credits_remaining, status)
+        VALUES ('p9','c2',-2,'exhausted')`);
+
+      const low = await lowBalanceClients(db, 2);
+      const morgan = low.find((c) => c.fullName === 'Morgan Hale');
+      expect(morgan?.creditsRemaining).toBe(-2);
+    });
+
+    it('ignores archived clients', async () => {
+      await db.execute(`UPDATE clients SET status = 'archived' WHERE id = 'c2'`);
+      const low = await lowBalanceClients(db, 2);
+      expect(low.map((c) => c.fullName)).not.toContain('Morgan Hale');
+    });
   });
 });

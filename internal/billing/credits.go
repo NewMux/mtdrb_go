@@ -550,3 +550,81 @@ func (s *Service) ExpirePackages(ctx context.Context, tx pgx.Tx, tenantID ids.ID
 func truncateToDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
+
+// LowBalanceClient is a client close enough to empty to be worth a renewal
+// conversation.
+type LowBalanceClient struct {
+	ClientID   ids.ID     `json:"client_id"`
+	ClientName string     `json:"client_name"`
+	Remaining  int        `json:"remaining"`
+	NextExpiry *time.Time `json:"next_expiry,omitempty"`
+	// LastSessionOn dates the last delivered session, so the trainer can tell
+	// "about to run out" from "stopped coming six weeks ago". The same number
+	// means very different things in those two cases.
+	LastSessionOn *time.Time `json:"last_session_on,omitempty"`
+}
+
+// LowBalance lists clients at or under a credit threshold, soonest to run out
+// first.
+//
+// Derived on every read rather than stored. A flag on the client row would be
+// exactly as truthful as the last job that refreshed it, and the whole value of
+// this list is that it is right at the moment the trainer looks at it — usually
+// standing in front of the person it concerns.
+//
+// The aggregate matches BalanceFor deliberately: expired and void packs are
+// excluded because a credit that cannot be redeemed is not a credit, and
+// exhausted packs are included because an overdrawn client sits on one and
+// their balance is negative. A client with no packs at all counts as zero and
+// belongs on this list — they are the most obvious renewal of all.
+func (s *Service) LowBalance(ctx context.Context, tx pgx.Tx, threshold int) ([]LowBalanceClient, error) {
+	if threshold < 0 {
+		return nil, errs.Invalid(errs.CodeValidation, "a credit threshold cannot be negative").
+			WithField("threshold", "must be zero or more")
+	}
+	today := truncateToDay(s.clock.Now())
+
+	rows, err := tx.Query(ctx, `
+		SELECT c.id, c.full_name,
+		       coalesce(p.remaining, 0) AS remaining,
+		       p.next_expiry,
+		       last.performed_on
+		  FROM clients c
+		  LEFT JOIN LATERAL (
+		         SELECT sum(credits_remaining) AS remaining,
+		                min(expires_at) FILTER (WHERE credits_remaining > 0) AS next_expiry
+		           FROM packages
+		          WHERE client_id = c.id
+		            AND status IN ('active', 'exhausted')
+		            AND credits_remaining <> 0
+		            AND (expires_at IS NULL OR expires_at >= $2)
+		       ) p ON true
+		  LEFT JOIN LATERAL (
+		         SELECT max(s.starts_at)::date AS performed_on
+		           FROM session_attendees sa
+		           JOIN sessions s ON s.id = sa.session_id
+		          WHERE sa.client_id = c.id AND sa.status = 'completed'
+		       ) last ON true
+		 WHERE c.deleted_at IS NULL
+		   AND c.status = 'active'
+		   AND coalesce(p.remaining, 0) <= $1
+		 ORDER BY coalesce(p.remaining, 0), p.next_expiry NULLS LAST, c.full_name`,
+		threshold, today)
+	if err != nil {
+		return nil, errs.Internal(err, "list low balances")
+	}
+	defer rows.Close()
+
+	out := []LowBalanceClient{}
+	for rows.Next() {
+		var c LowBalanceClient
+		if err := rows.Scan(&c.ClientID, &c.ClientName, &c.Remaining, &c.NextExpiry, &c.LastSessionOn); err != nil {
+			return nil, errs.Internal(err, "scan low balance")
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errs.Internal(err, "read low balances")
+	}
+	return out, nil
+}

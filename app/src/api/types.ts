@@ -186,3 +186,31 @@ export interface InvoiceDraftInput {
   notes?: string;
   lines: InvoiceLine[];
 }
+
+export interface LowBalanceClient {
+  client_id: string;
+  client_name: string;
+  remaining: number;
+  next_expiry?: string | null;
+  last_session_on?: string | null;
+}
+
+/**
+ * The five numbers, plus the renewal list.
+ *
+ * Fetched rather than mirrored: every figure is derived from the ledger and
+ * the calendar at read time, and a payment recorded on another device moves
+ * three of them at once. A stale dashboard is worse than an absent one.
+ */
+export interface DashboardSummary {
+  sessions_today: number;
+  sessions_today_unmarked: number;
+  sessions_left_this_week: number;
+  unpaid_invoices: number;
+  outstanding: Money;
+  low_balance_count: number;
+  low_balance: LowBalanceClient[];
+  low_balance_threshold: number;
+  income_this_month: Money;
+  currency: string;
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
+	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
 	"github.com/NewMux/mtdrb_go/internal/media"
@@ -38,6 +39,7 @@ type Deps struct {
 	Billing     *billing.Handler
 	Programming *programming.Handler
 	Sync        *sync.Handler
+	Dashboard   *dashboard.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
 }
@@ -107,6 +109,10 @@ func (s *Server) routes(deps Deps) chi.Router {
 				trainer.Mount("/payment-methods", deps.Billing.PaymentMethodRoutes())
 				trainer.Mount("/receivables", deps.Billing.ReceivablesRoutes())
 				trainer.Mount("/programs", deps.Programming.ProgramRoutes())
+
+				// Trainer-only: it carries revenue and receivables, which a
+				// portal client must never see.
+				trainer.Mount("/dashboard", deps.Dashboard.Routes())
 			})
 
 			// Reachable by portal clients too: logging your own sets is the

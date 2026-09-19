@@ -1,5 +1,5 @@
 /**
- * The three places a trainer goes, and the one thing they create.
+ * The four places a trainer goes, and the one thing they create.
  *
  * Today is first because it is the answer to the only question asked while
  * standing on a gym floor: who is in front of me, and what happens next.
@@ -60,6 +60,7 @@ export default function TabsLayout() {
         }}
       >
         <Tabs.Screen name="index" options={{ title: 'Today' }} />
+        <Tabs.Screen name="dashboard" options={{ title: 'Practice' }} />
         <Tabs.Screen name="clients" options={{ title: 'Clients' }} />
         <Tabs.Screen name="money" options={{ title: 'Money' }} />
       </Tabs>

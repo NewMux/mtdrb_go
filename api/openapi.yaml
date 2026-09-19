@@ -736,6 +736,56 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Receivables" }
 
+  /v1/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: The five numbers a trainer opens the app for
+      description: |
+        Today's sessions, sessions left this week, unpaid invoices, clients at
+        or under the renewal threshold, and income this month.
+
+        Every figure is derived at read time from the ledger and the calendar;
+        none is stored, so none can drift. `income_this_month` is **recognised
+        revenue** — what was earned by delivering sessions — not cash
+        collected. Selling a pack moves nothing here, because a prepaid pack is
+        a liability until it is trained off.
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardSummary" }
+
+  /v1/dashboard/low-balance:
+    get:
+      tags: [Dashboard]
+      summary: Clients who need renewing
+      description: |
+        Derived on every read rather than stored: a flag would only be as
+        truthful as the last job that refreshed it, and this list is read while
+        standing in front of the person it concerns.
+
+        Expired packs do not count — a credit that cannot be redeemed is not a
+        credit — and an overdrawn client reports a negative balance rather than
+        zero, because zero hides the debt.
+      parameters:
+        - name: threshold
+          in: query
+          description: Defaults to the tenant's `low_balance_threshold`.
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Clients
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clients:
+                    type: array
+                    items: { $ref: "#/components/schemas/LowBalanceClient" }
+                  threshold: { type: integer }
+
   /v1/payment-methods:
     get:
       tags: [Invoices]
@@ -1424,6 +1474,46 @@ components:
                   package_credits 10, which grants a hundred.
                   Required on a package line, forbidden on a service line.
               credits_expire_on: { type: string, format: date, nullable: true }
+
+    LowBalanceClient:
+      type: object
+      properties:
+        client_id: { type: string, format: uuid }
+        client_name: { type: string }
+        remaining:
+          type: integer
+          description: May be negative when the client is overdrawn.
+        next_expiry: { type: string, format: date, nullable: true }
+        last_session_on:
+          type: string
+          format: date
+          nullable: true
+          description: >-
+            Distinguishes "about to run out" from "stopped coming" — the same
+            balance, very different conversations.
+
+    DashboardSummary:
+      type: object
+      properties:
+        sessions_today:
+          type: integer
+          description: Attendees, not slots. A semi-private with three people is three.
+        sessions_today_unmarked: { type: integer }
+        sessions_left_this_week:
+          type: integer
+          description: From now to the end of the week, so it shrinks through the day.
+        unpaid_invoices: { type: integer }
+        outstanding: { $ref: "#/components/schemas/Money" }
+        low_balance_count: { type: integer }
+        low_balance:
+          type: array
+          items: { $ref: "#/components/schemas/LowBalanceClient" }
+        low_balance_threshold: { type: integer }
+        income_this_month:
+          allOf:
+            - $ref: "#/components/schemas/Money"
+          description: Recognised revenue month to date, not cash collected.
+        currency: { type: string }
 
     PaymentInstrument:
       type: string
