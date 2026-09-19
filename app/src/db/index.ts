@@ -56,7 +56,12 @@ export async function openDatabase(): Promise<Database> {
   if (instance) return instance;
 
   if (process.env.EXPO_PUBLIC_DEMO === '1' && Platform.OS === 'web') {
-    const { openInPageDatabase } = await import('@/demo/sqljs');
+    // require, not a dynamic import: an import() becomes a separate chunk the
+    // page has to fetch at runtime, and a demo embedded in a frame may have no
+    // reachable origin to fetch it from. This keeps it in the one bundle,
+    // still dropped from a build where the flag is not set.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { openInPageDatabase } = require('@/demo/sqljs') as typeof import('@/demo/sqljs');
     instance = await openInPageDatabase();
     return instance;
   }

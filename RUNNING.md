@@ -203,3 +203,12 @@ WebAssembly to fetch, no storage handle, nothing the sandbox denies. It is
 in-memory only, which for a seeded demo costs nothing: the seed runs again on
 reload. See `app/src/demo/sqljs.ts`; the real app keeps `expo-sqlite`, which is
 the right driver on a device, and the engine is absent from a non-demo build.
+
+**And inline the bundle.** An embedded page may have no origin its subresources
+can be fetched from, and the failure is invisible: the pre-rendered HTML holds
+a loading spinner, so a bundle that never loads looks exactly like one that is
+still loading. Fold the emitted JS into the HTML as a single `<script>`, inline
+the navigation PNGs as `data:` URIs, `history.replaceState` to `/` before it
+runs so the router does not depend on the hosting path, and add a timer that
+replaces the spinner with the captured error if the app has not mounted. A
+silent spinner is the one failure mode that tells nobody anything.
