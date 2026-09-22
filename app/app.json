@@ -9,8 +9,8 @@
     "newArchEnabled": true,
     "ios": { "supportsTablet": true, "bundleIdentifier": "io.coachpulse.app" },
     "android": { "package": "io.coachpulse.app", "edgeToEdgeEnabled": true },
-    "web": { "bundler": "metro", "output": "static" },
-    "plugins": ["expo-router", "expo-secure-store"],
+    "web": { "bundler": "metro", "output": "single" },
+    "plugins": ["expo-router", "expo-secure-store", "expo-sqlite", "expo-status-bar"],
     "extra": {
       "apiBaseUrl": "http://localhost:8080"
     }
