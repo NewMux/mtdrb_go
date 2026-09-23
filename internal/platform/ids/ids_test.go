@@ -48,3 +48,35 @@ func TestParseRoundTrip(t *testing.T) {
 		t.Error("expected parse error")
 	}
 }
+
+func TestUseSequenceIsReproducibleAndValid(t *testing.T) {
+	start := time.Date(2026, 6, 17, 5, 30, 0, 0, time.UTC)
+	mint := func() []ID {
+		restore := UseSequence(start, 42)
+		defer restore()
+		out := make([]ID, 50)
+		for i := range out {
+			out[i] = New()
+		}
+		return out
+	}
+	first, second := mint(), mint()
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf("id %d differs between runs: %s and %s", i, first[i], second[i])
+		}
+		if first[i].Version() != 7 || first[i].Variant().String() != "RFC4122" {
+			t.Fatalf("id %d is not a UUIDv7: %s", i, first[i])
+		}
+		if i > 0 && first[i].String() <= first[i-1].String() {
+			t.Fatalf("id %d went backwards: %s then %s", i, first[i-1], first[i])
+		}
+	}
+	sec, _ := first[0].Time().UnixTime()
+	if got := time.Unix(sec, 0).UTC(); !got.Equal(start) {
+		t.Errorf("first id embeds %v, want %v", got, start)
+	}
+	if New() == first[0] {
+		t.Error("restore did not return New to random ids")
+	}
+}

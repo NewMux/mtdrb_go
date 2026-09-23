@@ -9,7 +9,7 @@ OWNER_DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/coachpulse?ssl
 APP_DATABASE_URL   ?= postgres://coachpulse_app:coachpulse_app@localhost:5432/coachpulse?sslmode=disable
 
 .PHONY: help up down logs reset migrate migrate-down migrate-status generate \
-        build run worker test test-integration lint fmt vet tidy verify app-install app-start
+        build run worker demo-record test test-integration lint fmt vet tidy verify app-install app-start
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -48,6 +48,9 @@ run: ## Start the API against the local stack
 
 worker: ## Start the recurring-jobs worker
 	DATABASE_URL="$(APP_DATABASE_URL)" $(GO) run ./cmd/worker
+
+demo-record: ## Re-record the demo build's practice through the real API
+	DEMO_OWNER_URL="$(OWNER_DATABASE_URL)" $(GO) run ./cmd/demo
 
 test: ## Run unit tests
 	$(GO) test -race ./...

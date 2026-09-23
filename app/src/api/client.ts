@@ -30,6 +30,13 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The code a demo build answers every write with: there is no server to send
+ * it to. Here rather than in src/demo so a screen can recognise it without
+ * pulling the demo into a normal build.
+ */
+export const DEMO_READ_ONLY = 'demo_read_only';
+
 /** A transport failure — no signal, DNS, a dropped connection. */
 export class NetworkError extends Error {
   constructor(cause: unknown) {
@@ -54,7 +61,7 @@ export interface ClientOptions {
   onSignedOut?: () => void;
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: string;
   body?: unknown;
   /** Makes a mutating request safe to retry. */

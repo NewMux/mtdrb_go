@@ -173,16 +173,32 @@ cd app
 EXPO_PUBLIC_DEMO=1 npx expo start
 ```
 
-Seeds a practice into the device database on first launch — three clients, a
-day of sessions, packages, invoices, last week's training — and never calls the
-network. Useful for showing someone the app without standing up a backend.
+Every launch seeds the device with Sam Rivera's studio in Dubai: twelve
+clients over twelve weeks, a Wednesday with four sessions (one already done),
+packs, invoices in AED (a renewal just sent, one on net-30 terms, one overdue)
+and three weeks of logged training. It never calls the network. Useful for
+showing someone the app without standing up a backend.
 
-It is not a mock: every screen already reads local SQLite, so this is the real
-app with the sync engine idle. What it cannot do is anything the server
-decides. Credits are not really burned, revenue is not recognised and invoices
-are not settled — those happen in the ledger, behind the API. The screens say
-"waiting on the server" and nothing ever answers, which is exactly what a phone
-in a basement sees.
+It is not a mock. The practice was recorded from the real API: `cmd/demo`
+runs a scenario against a throwaway database with a fixed clock and writes
+what a device would receive — a full sync pull and the answers to the reads
+the app makes — to `app/src/demo/fixtures/recording.json`. The demo seeds the
+device by pulling that through the real sync engine, and serves the recorded
+reads, so every balance and earnings figure is real ledger output. Dates move
+so the recorded Wednesday is always today, at the studio's wall-clock hours.
+
+What it cannot do is anything the server decides next. Credits are not
+really burned, revenue is not recognised and invoices are not settled. Offline
+actions queue, exactly as on a phone in a basement; the online-only ones
+(issuing an invoice) say this is the demo.
+
+To change the practice, edit `cmd/demo/scenario.go` and re-record against the
+local stack (the owner connection needs `CREATEDB`; the scratch database is
+dropped afterwards). The same scenario gives the same file, byte for byte:
+
+```bash
+make demo-record
+```
 
 To build it for hosting under a path:
 

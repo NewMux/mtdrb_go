@@ -20,7 +20,6 @@ import { openDatabase } from '@/db';
 import { getMeta, setMeta, type Database } from '@/db/types';
 import { secureTokens } from '@/auth/tokens';
 import { synchronise, type SyncReport } from '@/sync/engine';
-import { DEMO_ACCOUNT, seedDemo } from '@/demo/seed';
 import * as outbox from '@/sync/outbox';
 
 /** How often a foregrounded app tries to drain the outbox. */
@@ -30,11 +29,31 @@ const SYNC_INTERVAL_MS = 45_000;
  * A build with no server behind it.
  *
  * Not a mock: every screen already reads local SQLite, so this is the real app
- * with the sync engine idle. What it cannot do is anything the server decides
- * — burn a credit, recognise revenue, settle an invoice — so those stay
- * queued, exactly as they would on a phone with no signal.
+ * seeded from a recording of the real server (see src/demo/replay.ts). What it
+ * cannot do is anything the server decides next — burn a credit, recognise
+ * revenue, settle an invoice — so those stay queued, exactly as they would on
+ * a phone with no signal.
  */
 export const DEMO = process.env.EXPO_PUBLIC_DEMO === '1';
+
+type DemoModule = typeof import('@/demo/replay');
+type DemoKit = { module: DemoModule; recording: import('@/demo/replay').Recording };
+
+/**
+ * The replay and its recording, in a demo build only.
+ *
+ * A require on the inlined flag, as in src/db/index.ts: a normal build drops
+ * the branch, and with it half a megabyte of fixture.
+ */
+function loadDemo(): DemoKit | null {
+  if (process.env.EXPO_PUBLIC_DEMO !== '1') return null;
+  /* eslint-disable @typescript-eslint/no-var-requires */
+  return {
+    module: require('@/demo/replay') as DemoModule,
+    recording: require('@/demo/fixtures/recording.json') as DemoKit['recording'],
+  };
+  /* eslint-enable @typescript-eslint/no-var-requires */
+}
 
 const ACCOUNT_KEY = 'auth.account';
 const LAST_SYNC_KEY = 'sync.last_at';
@@ -114,13 +133,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // refresh promise that keeps concurrent 401s from spending the token twice.
   const signedOut = useRef<() => void>(() => {});
 
+  const demo = useMemo(loadDemo, []);
   const api = useMemo(
-    () => new ApiClient({
-      baseUrl: baseUrl(),
-      tokens: secureTokens,
-      onSignedOut: () => signedOut.current(),
-    }),
-    [],
+    () => demo
+      ? new demo.module.DemoApi(demo.recording)
+      : new ApiClient({
+        baseUrl: baseUrl(),
+        tokens: secureTokens,
+        onSignedOut: () => signedOut.current(),
+      }),
+    [demo],
   );
 
   const touch = useCallback(() => setRevision((r) => r + 1), []);
@@ -147,11 +169,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       if (cancelled) return;
 
-      if (DEMO) {
-        await seedDemo(database);
+      if (demo) {
+        await demo.module.replay(database, api as InstanceType<DemoModule['DemoApi']>);
         if (cancelled) return;
         setDb(database);
-        setAccount(DEMO_ACCOUNT);
+        setAccount(demo.recording.account);
         await refreshCounts(database);
         setReady(true);
         return;
@@ -172,7 +194,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setReady(true);
     })();
     return () => { cancelled = true; };
-  }, [refreshCounts]);
+  }, [refreshCounts, demo, api]);
 
   const syncNow = useCallback(async (): Promise<SyncReport | null> => {
     if (!db || !account) return null;

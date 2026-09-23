@@ -280,12 +280,16 @@ export const en = {
     offlineError: 'No connection. An invoice number has to come from the server, so this one cannot be issued yet.',
   },
 
+  demo: {
+    readOnly: 'This is the demo, with no server to send this to. In a real account the invoice is numbered and issued here.',
+  },
+
   syncScreen: {
     title: 'Sync',
     lastSynced: 'Last synced {time}',
     notYet: 'Not synced on this device yet',
     demo:
-      'This build has no server behind it. Everything you do is written to this device and queued — but nothing can be sent, so credits are not really burned, revenue is not recognised and invoices are not settled. That all happens in the ledger, behind an API.',
+      'This is a recorded practice: every number in it came from the real ledger. There is no server behind it now, so what you do is written to this device and queued, and nothing is sent — credits are not burned, revenue is not recognised and invoices are not settled.',
     waitingToSend: '{count} waiting to send',
     safeOffline: 'No connection. They are safe on this device.',
     sendThemselves: 'They send themselves in the background.',

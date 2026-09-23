@@ -9,11 +9,11 @@
  * sql.js's asm.js build has neither dependency — no worker, no WebAssembly to
  * fetch, no storage handle. It is slower and it lives only in memory, which
  * for a seeded demo costs nothing: there is no server to sync with and the
- * seed runs again on reload.
+ * recording is replayed again on reload.
  *
- * Loaded through a require rather than an import so Metro can drop it from a
- * build where `EXPO_PUBLIC_DEMO` is not set. The real app keeps expo-sqlite,
- * which is the right driver on a device.
+ * Only a demo build carries it: metro.config.js resolves it to nothing when
+ * `EXPO_PUBLIC_DEMO` is not set. The real app keeps expo-sqlite, which is the
+ * right driver on a device.
  */
 
 import type { Database, Row } from '@/db/types';

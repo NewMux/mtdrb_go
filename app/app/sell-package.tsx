@@ -13,7 +13,7 @@ import React, { useState } from 'react';
 import { ScrollView, Share, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { ApiError, NetworkError } from '@/api/client';
+import { ApiError, DEMO_READ_ONLY, NetworkError } from '@/api/client';
 import type { Invoice, ShareLink } from '@/api/types';
 import { sellPackage } from '@/features/billing';
 import { useT, type I18n } from '@/i18n';
@@ -176,6 +176,7 @@ export default function SellPackageScreen() {
 function describe(cause: unknown, { t }: I18n): string {
   if (cause instanceof NetworkError) return t('sellPackage.offlineError');
   if (cause instanceof ApiError) {
+    if (cause.code === DEMO_READ_ONLY) return t('demo.readOnly');
     const fields = cause.fields ? Object.values(cause.fields) : [];
     return fields[0] ?? cause.message;
   }

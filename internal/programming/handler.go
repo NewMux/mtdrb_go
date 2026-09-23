@@ -3,7 +3,6 @@ package programming
 import (
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -396,13 +395,15 @@ func (h *Handler) assignProgram(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) startWorkout(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClientID     ids.ID     `json:"client_id"`
-		AssignmentID *ids.ID    `json:"assignment_id"`
-		DayID        *ids.ID    `json:"day_id"`
-		SessionID    *ids.ID    `json:"session_id"`
-		WeekNumber   int        `json:"week_number"`
-		PerformedOn  *time.Time `json:"performed_on"`
-		Notes        string     `json:"notes"`
+		ClientID     ids.ID  `json:"client_id"`
+		AssignmentID *ids.ID `json:"assignment_id"`
+		DayID        *ids.ID `json:"day_id"`
+		SessionID    *ids.ID `json:"session_id"`
+		WeekNumber   int     `json:"week_number"`
+		// A calendar date, as the spec publishes it; a timestamp is still
+		// accepted by dates.Date for callers that sent one.
+		PerformedOn *dates.Date `json:"performed_on"`
+		Notes       string      `json:"notes"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.Error(w, r, err)
@@ -425,8 +426,8 @@ func (h *Handler) startWorkout(w http.ResponseWriter, r *http.Request) {
 			ClientID: clientID, AssignmentID: req.AssignmentID, DayID: req.DayID,
 			SessionID: req.SessionID, WeekNumber: req.WeekNumber, Notes: req.Notes,
 		}
-		if req.PerformedOn != nil {
-			in.PerformedOn = *req.PerformedOn
+		if day := req.PerformedOn.TimePtr(); day != nil {
+			in.PerformedOn = *day
 		}
 		workout, err := h.svc.StartWorkout(r.Context(), tx, tenantID, in)
 		if err != nil {

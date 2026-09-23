@@ -49,8 +49,8 @@ let instance: Database | null = null;
  * A demo build on the web takes a different driver. expo-sqlite needs a Worker
  * and OPFS there, and a frame sandboxed without `allow-same-origin` — which is
  * how an embedded demo is hosted — denies both, so the app never started at
- * all. The condition is on the inlined build flag so this branch, and the
- * engine behind it, disappear from a normal build.
+ * all. Outside a demo build metro.config.js resolves the engine to nothing, so
+ * a normal build does not carry it.
  */
 export async function openDatabase(): Promise<Database> {
   if (instance) return instance;
@@ -58,8 +58,7 @@ export async function openDatabase(): Promise<Database> {
   if (process.env.EXPO_PUBLIC_DEMO === '1' && Platform.OS === 'web') {
     // require, not a dynamic import: an import() becomes a separate chunk the
     // page has to fetch at runtime, and a demo embedded in a frame may have no
-    // reachable origin to fetch it from. This keeps it in the one bundle,
-    // still dropped from a build where the flag is not set.
+    // reachable origin to fetch it from. This keeps it in the one bundle.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { openInPageDatabase } = require('@/demo/sqljs') as typeof import('@/demo/sqljs');
     instance = await openInPageDatabase();
