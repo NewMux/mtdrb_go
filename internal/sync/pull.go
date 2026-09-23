@@ -49,7 +49,8 @@ var collections = []collection{
 		country, language, document_language, digits, week_start, working_hours,
 		session_timeout_days, buffer_minutes, allow_overdraft, no_show_is_billable,
 		low_balance_threshold, plan, plan_status, trial_ends_at, plan_renews_on,
-		cancel_at_period_end, updated_at`},
+		cancel_at_period_end, vat_registered, trn, vat_rate_bp, prices_include_vat,
+		onboarded_at, updated_at`},
 
 	{"clients", "clients", `id, full_name, email, phone, date_of_birth, status::text AS status,
 		emergency_contact_name, emergency_contact_phone, allow_overdraft,

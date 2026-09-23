@@ -619,7 +619,8 @@ paths:
         Owner only. Fields left out are left alone.
 
         Setting `country` also sets `week_start` to that country's (Sunday in
-        Saudi Arabia, Monday in the UAE) unless the same change names one.
+        Saudi Arabia, Monday in the UAE) and `vat_rate_bp` to its standard
+        rate, unless the same change names them.
         `currency` answers `409 currency_locked` once money has been recorded.
       requestBody:
         required: true
@@ -635,6 +636,19 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/settings/onboarded:
+    post:
+      tags: [Settings]
+      summary: Finish setting up the practice
+      description: Owner only. Idempotent; the first time stands.
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/subscription:
     get:
@@ -2472,6 +2486,14 @@ components:
         allow_overdraft: { type: boolean }
         no_show_is_billable: { type: boolean }
         low_balance_threshold: { type: integer }
+        vat_registered: { type: boolean }
+        trn: { type: [string, "null"], description: Tax registration number, 15 digits }
+        vat_rate_bp: { type: integer, description: "Basis points: 500 is 5%" }
+        prices_include_vat: { type: boolean }
+        onboarded_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the owner finished setting up; the app walks them through it until then.
 
     SettingsPatch:
       type: object
@@ -2492,6 +2514,13 @@ components:
         allow_overdraft: { type: boolean }
         no_show_is_billable: { type: boolean }
         low_balance_threshold: { type: integer, minimum: 0, maximum: 100 }
+        vat_registered: { type: boolean, description: Needs a TRN }
+        trn:
+          type: string
+          description: Fifteen digits; beginning 100 in the UAE, beginning and ending 3 in
+            Saudi Arabia. Spaces and dashes are ignored; empty clears it.
+        vat_rate_bp: { type: integer, minimum: 0, maximum: 10000 }
+        prices_include_vat: { type: boolean }
 
     Subscription:
       type: object

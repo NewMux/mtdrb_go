@@ -130,7 +130,7 @@ func (s *Services) Handlers() api.Deps {
 	pool := s.Pool
 	deps := api.Deps{
 		Auth:         auth.NewHandler(s.Auth, s.authOptions),
-		Settings:     settings.NewHandler(pool),
+		Settings:     settings.NewHandler(pool, s.Clock),
 		Catalog:      catalog.NewHandler(pool, s.Clock),
 		Subscription: subscription.NewHandler(pool, s.Clock),
 		Clock:        s.Clock,

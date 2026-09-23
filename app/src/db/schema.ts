@@ -255,6 +255,20 @@ export const UPGRADES: SchemaUpgrade[] = [
     ],
     resync: ['sessions'],
   },
+  {
+    // The practice's VAT registration, and whether its owner has been
+    // through onboarding — the gate that decides whether a new account
+    // lands on the setup wizard or on Today.
+    version: 4,
+    statements: [
+      `ALTER TABLE settings ADD COLUMN vat_registered INTEGER`,
+      `ALTER TABLE settings ADD COLUMN trn TEXT`,
+      `ALTER TABLE settings ADD COLUMN vat_rate_bp INTEGER`,
+      `ALTER TABLE settings ADD COLUMN prices_include_vat INTEGER`,
+      `ALTER TABLE settings ADD COLUMN onboarded_at TEXT`,
+    ],
+    resync: ['settings'],
+  },
 ];
 
 /** The version a device is at once every upgrade has run. */

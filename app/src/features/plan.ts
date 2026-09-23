@@ -25,6 +25,7 @@ export interface PracticeSettings {
   trial_ends_at: string | null;
   plan_renews_on: string | null;
   cancel_at_period_end: number | null;
+  onboarded_at: string | null;
 }
 
 /** The practice's mirrored settings row, or null before the first sync. */
@@ -32,7 +33,7 @@ export async function practiceSettings(db: Database): Promise<PracticeSettings |
   return db.selectOne<PracticeSettings>(
     `SELECT id, business_name, currency, timezone, country, language, week_start,
             session_timeout_days, plan,
-            plan_status, trial_ends_at, plan_renews_on, cancel_at_period_end
+            plan_status, trial_ends_at, plan_renews_on, cancel_at_period_end, onboarded_at
        FROM settings LIMIT 1`,
   );
 }

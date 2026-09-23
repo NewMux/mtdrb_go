@@ -3,7 +3,7 @@ import { planState, type PracticeSettings } from '@/features/plan';
 const base: PracticeSettings = {
   id: 't', business_name: 'Rivera Strength', currency: 'AED', timezone: 'Asia/Dubai', country: 'AE',
   language: 'en', week_start: 1, session_timeout_days: 30, plan: 'trial', plan_status: 'active',
-  trial_ends_at: '2026-07-01T12:00:00Z', plan_renews_on: null, cancel_at_period_end: 0,
+  trial_ends_at: '2026-07-01T12:00:00Z', plan_renews_on: null, cancel_at_period_end: 0, onboarded_at: null,
 };
 
 describe('planState', () => {

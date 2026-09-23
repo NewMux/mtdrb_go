@@ -50,6 +50,15 @@ type Settings struct {
 	AllowOverdraft      bool         `json:"allow_overdraft"`
 	NoShowIsBillable    bool         `json:"no_show_is_billable"`
 	LowBalanceThreshold int          `json:"low_balance_threshold"`
+
+	VATRegistered    bool    `json:"vat_registered"`
+	TRN              *string `json:"trn"`
+	VATRateBP        int     `json:"vat_rate_bp"`
+	PricesIncludeVAT bool    `json:"prices_include_vat"`
+
+	// OnboardedAt is when the owner finished setting the practice up; the
+	// app walks them through it until then.
+	OnboardedAt *time.Time `json:"onboarded_at"`
 }
 
 // WorkingHours is the bookable week: weekday ("0" = Sunday) to intervals of
@@ -93,6 +102,11 @@ type Patch struct {
 	AllowOverdraft      *bool         `json:"allow_overdraft"`
 	NoShowIsBillable    *bool         `json:"no_show_is_billable"`
 	LowBalanceThreshold *int          `json:"low_balance_threshold"`
+	VATRegistered       *bool         `json:"vat_registered"`
+	// TRN is the tax registration number; an empty string clears it.
+	TRN              *string `json:"trn"`
+	VATRateBP        *int    `json:"vat_rate_bp"`
+	PricesIncludeVAT *bool   `json:"prices_include_vat"`
 }
 
 // DefaultWeekStart is the first day of the working week in a country.
@@ -105,6 +119,51 @@ func DefaultWeekStart(country string) int {
 	return int(time.Monday)
 }
 
+// DefaultVATRate is a country's standard rate in basis points.
+func DefaultVATRate(country string) int {
+	switch strings.ToUpper(country) {
+	case "SA":
+		return 1500
+	case "BH":
+		return 1000
+	case "AE", "OM":
+		return 500
+	case "QA", "KW":
+		// Neither levies VAT yet.
+		return 0
+	case "EG":
+		return 1400
+	case "JO":
+		return 1600
+	case "GB":
+		return 2000
+	}
+	return 0
+}
+
+var trnFormat = regexp.MustCompile(`^[0-9]{15}$`)
+
+// ValidTRN checks a tax registration number's shape for a country: fifteen
+// digits everywhere it applies, beginning 100 in the UAE, and beginning and
+// ending in 3 in Saudi Arabia. It cannot check the number is real — only the
+// tax authority can — but it catches the typo that would print a wrong TRN on
+// every tax invoice.
+func ValidTRN(country *string, trn string) bool {
+	if !trnFormat.MatchString(trn) {
+		return false
+	}
+	if country == nil {
+		return true
+	}
+	switch *country {
+	case "AE":
+		return strings.HasPrefix(trn, "100")
+	case "SA":
+		return trn[0] == '3' && trn[14] == '3'
+	}
+	return true
+}
+
 // Get reads the practice's settings.
 func Get(ctx context.Context, tx pgx.Tx, tenantID ids.ID) (Settings, error) {
 	var (
@@ -115,12 +174,14 @@ func Get(ctx context.Context, tx pgx.Tx, tenantID ids.ID) (Settings, error) {
 		SELECT name, default_currency, timezone, country, language, document_language, digits,
 		       week_start, working_hours, targets, automations, session_timeout_days,
 		       buffer_minutes, allow_overdraft, no_show_is_billable, low_balance_threshold,
-		       EXISTS (SELECT 1 FROM journal_entries)
+		       EXISTS (SELECT 1 FROM journal_entries),
+		       vat_registered, trn, vat_rate_bp, prices_include_vat, onboarded_at
 		  FROM tenants WHERE id = $1`, tenantID,
 	).Scan(&s.BusinessName, &s.Currency, &s.Timezone, &s.Country, &s.Language, &s.DocumentLanguage,
 		&s.Digits, &s.WeekStart, &hours, &targets, &automations, &s.SessionTimeoutDays,
 		&s.BufferMinutes, &s.AllowOverdraft, &s.NoShowIsBillable, &s.LowBalanceThreshold,
-		&s.CurrencyLocked); err != nil {
+		&s.CurrencyLocked, &s.VATRegistered, &s.TRN, &s.VATRateBP, &s.PricesIncludeVAT,
+		&s.OnboardedAt); err != nil {
 		return Settings{}, errs.Internal(err, "read settings")
 	}
 	s.WorkingHours = WorkingHours{}
@@ -217,9 +278,15 @@ func Update(ctx context.Context, tx pgx.Tx, tenantID ids.ID, p Patch) (Settings,
 			return Settings{}, invalid("country", "must be a two-letter ISO code")
 		}
 		next.Country = &code
-		// The week follows the country unless this same change says otherwise.
-		if p.WeekStart == nil && (current.Country == nil || *current.Country != code) {
-			next.WeekStart = DefaultWeekStart(code)
+		// The week and the VAT rate follow the country unless this same
+		// change says otherwise.
+		if current.Country == nil || *current.Country != code {
+			if p.WeekStart == nil {
+				next.WeekStart = DefaultWeekStart(code)
+			}
+			if p.VATRateBP == nil {
+				next.VATRateBP = DefaultVATRate(code)
+			}
 		}
 	}
 	if p.Language != nil {
@@ -293,6 +360,33 @@ func Update(ctx context.Context, tx pgx.Tx, tenantID ids.ID, p Patch) (Settings,
 		next.LowBalanceThreshold = *p.LowBalanceThreshold
 	}
 
+	if p.VATRateBP != nil {
+		if *p.VATRateBP < 0 || *p.VATRateBP > 10000 {
+			return Settings{}, invalid("vat_rate_bp", "must be 0 to 10000 (0% to 100%)")
+		}
+		next.VATRateBP = *p.VATRateBP
+	}
+	if p.PricesIncludeVAT != nil {
+		next.PricesIncludeVAT = *p.PricesIncludeVAT
+	}
+	if p.TRN != nil {
+		trn := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(*p.TRN), " ", ""), "-", "")
+		if trn == "" {
+			next.TRN = nil
+		} else {
+			next.TRN = &trn
+		}
+	}
+	if p.VATRegistered != nil {
+		next.VATRegistered = *p.VATRegistered
+	}
+	if next.TRN != nil && !ValidTRN(next.Country, *next.TRN) {
+		return Settings{}, invalid("trn", "does not look like a tax registration number for this country")
+	}
+	if next.VATRegistered && next.TRN == nil {
+		return Settings{}, invalid("trn", "is required when registered for VAT")
+	}
+
 	hours, _ := json.Marshal(next.WorkingHours)
 	targets, _ := json.Marshal(next.Targets)
 	automations, _ := json.Marshal(next.Automations)
@@ -301,13 +395,25 @@ func Update(ctx context.Context, tx pgx.Tx, tenantID ids.ID, p Patch) (Settings,
 			name = $2, default_currency = $3, timezone = $4, country = $5, language = $6,
 			document_language = $7, digits = $8, week_start = $9, working_hours = $10,
 			targets = $11, automations = $12, session_timeout_days = $13, buffer_minutes = $14,
-			allow_overdraft = $15, no_show_is_billable = $16, low_balance_threshold = $17
+			allow_overdraft = $15, no_show_is_billable = $16, low_balance_threshold = $17,
+			vat_registered = $18, trn = $19, vat_rate_bp = $20, prices_include_vat = $21
 		 WHERE id = $1`,
 		tenantID, next.BusinessName, next.Currency, next.Timezone, next.Country, next.Language,
 		next.DocumentLanguage, next.Digits, next.WeekStart, hours, targets, automations,
 		next.SessionTimeoutDays, next.BufferMinutes, next.AllowOverdraft, next.NoShowIsBillable,
-		next.LowBalanceThreshold); err != nil {
+		next.LowBalanceThreshold, next.VATRegistered, next.TRN, next.VATRateBP,
+		next.PricesIncludeVAT); err != nil {
 		return Settings{}, errs.Internal(err, "update settings")
+	}
+	return Get(ctx, tx, tenantID)
+}
+
+// MarkOnboarded records that the owner has set the practice up. Idempotent:
+// the first time stands.
+func MarkOnboarded(ctx context.Context, tx pgx.Tx, tenantID ids.ID, now time.Time) (Settings, error) {
+	if _, err := tx.Exec(ctx,
+		`UPDATE tenants SET onboarded_at = COALESCE(onboarded_at, $2) WHERE id = $1`, tenantID, now); err != nil {
+		return Settings{}, errs.Internal(err, "mark onboarded")
 	}
 	return Get(ctx, tx, tenantID)
 }

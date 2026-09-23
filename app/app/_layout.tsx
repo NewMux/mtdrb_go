@@ -15,7 +15,8 @@ import { StatusBar } from 'expo-status-bar';
 
 import { isHeldByAnotherTab } from '@/db/errors';
 import { useT } from '@/i18n';
-import { AppProvider, useApp } from '@/state/app';
+import { practiceSettings } from '@/features/plan';
+import { AppProvider, useApp, useQuery } from '@/state/app';
 import { PreferencesProvider } from '@/state/preferences';
 import { OverlayProvider } from '@/ui/overlay';
 import { space } from '@/ui/theme';
@@ -32,6 +33,10 @@ function AuthGate() {
   const { ready, account } = useApp();
   const segments = useSegments();
   const router = useRouter();
+  // The practice's mirrored row: null until the first sync brings it, which
+  // is why a missing row sends nobody anywhere.
+  const practice = useQuery(practiceSettings).data;
+  const needsSetup = account?.role === 'owner' && practice != null && !practice.onboarded_at;
 
   useEffect(() => {
     if (!ready) return;
@@ -39,9 +44,14 @@ function AuthGate() {
     // A reset link is opened by someone who cannot sign in; it is the one
     // other screen reachable without an account.
     const onReset = segments[0] === 'reset-password';
+    const onSetup = segments[0] === 'onboarding';
     if (!account && !onSignIn && !onReset) router.replace('/sign-in');
-    else if (account && onSignIn) router.replace('/');
-  }, [ready, account, segments, router]);
+    else if (account && onSignIn) router.replace(needsSetup ? '/onboarding' : '/');
+    // A new practice is set up before anything else; one that is set up has
+    // no business on the wizard.
+    else if (needsSetup && !onSetup) router.replace('/onboarding');
+    else if (account && onSetup && practice?.onboarded_at) router.replace('/');
+  }, [ready, account, segments, router, needsSetup, practice?.onboarded_at]);
 
   return null;
 }
@@ -101,6 +111,7 @@ function Shell() {
         <Stack.Screen name="dashboard" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
         <Stack.Screen name="reset-password" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
         <Stack.Screen name="+not-found" options={{ headerShown: false }} />
         <Stack.Screen name="workout/[id]" options={{ title: t('workout.fallbackTitle') }} />
         <Stack.Screen name="sell-package" options={{ title: t('sellPackage.title'), presentation: 'modal' }} />

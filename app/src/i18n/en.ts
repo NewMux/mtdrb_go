@@ -612,6 +612,49 @@ export const en = {
     noExpiry: 'no expiry',
   },
 
+  onboarding: {
+    stepOf: 'Step {n} of {total}',
+    continue: 'Continue',
+    skip: 'Skip for now',
+    back: 'Back',
+    rateInvalid: 'The VAT rate is not a number.',
+    placeDefault: 'My studio',
+    offerDefault: '10 sessions',
+    practice: {
+      title: 'Your practice',
+      body: 'Where you are sets your working week and your VAT. Everything here can be changed later in Settings.',
+    },
+    vat: {
+      title: 'VAT',
+      body: 'Whether you charge VAT decides what your invoices say and what you owe each quarter.',
+      registered: 'I am registered',
+      notRegistered: 'Not registered',
+      trn: 'Tax registration number (TRN)',
+      trnHint: 'Fifteen digits, from your registration certificate.',
+      rate: 'VAT rate (%)',
+    },
+    location: {
+      title: 'Where you train',
+      body: 'Your main place. Add the gym, the beach or online coaching later.',
+      later: 'Other places can be added under Locations.',
+    },
+    offer: {
+      title: 'What you sell',
+      body: 'Your most common pack. Selling it becomes a tap instead of a form.',
+    },
+    client: {
+      title: 'Your first client',
+      body: 'Add one now, or skip and add them from Clients.',
+      name: 'Name',
+      phone: 'Phone',
+      import: 'Have a list already? Import it from a spreadsheet under Clients.',
+    },
+    readyTitle: 'That is everything.',
+    readyBody: 'Book a session from the calendar, sell a pack from a client’s profile, and your books keep themselves.',
+    finish: 'Go to today',
+    finishWithClient: 'Add them and go to today',
+  },
+
   weekdays: {
     '0': 'Sunday',
     '1': 'Monday',

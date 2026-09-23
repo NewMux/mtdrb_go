@@ -146,6 +146,8 @@ func runScenario(ctx context.Context, c *apiClient) (*Recording, error) {
 		"automations": map[string]any{
 			"renewal_due": true, "overdue_invoice": true, "inactive_client": true, "programme_ending": false,
 		},
+		// A registered UAE business, quoting prices with VAT in.
+		"vat_registered": true, "trn": "100234567800003", "prices_include_vat": true,
 	}, nil); err != nil {
 		return nil, fmt.Errorf("settings: %w", err)
 	}
@@ -203,6 +205,11 @@ func runScenario(ctx context.Context, c *apiClient) (*Recording, error) {
 		if err := c.do(ctx, "POST", "/v1/package-offers", offer, nil); err != nil {
 			return nil, fmt.Errorf("offer %v: %w", offer["name"], err)
 		}
+	}
+
+	// Sam has been through the setup wizard.
+	if err := c.do(ctx, "POST", "/v1/settings/onboarded", map[string]any{}, nil); err != nil {
+		return nil, fmt.Errorf("onboarded: %w", err)
 	}
 
 	exercises, err := c.exercises(ctx)

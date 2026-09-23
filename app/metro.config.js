@@ -19,6 +19,13 @@ const { getDefaultConfig } = require('expo/metro-config');
 const config = getDefaultConfig(__dirname);
 config.resolver.assetExts.push('wasm');
 
+// The flag is inlined into the code at transform time, and Metro's cache
+// does not know about environment variables: a normal build made after a
+// demo build on the same machine reused the demo's transforms, took the demo
+// branch, and found its modules resolved to nothing — a white page. The flag
+// is part of the cache's identity instead.
+config.cacheVersion = `demo-${process.env.EXPO_PUBLIC_DEMO === '1' ? '1' : '0'}`;
+
 const DEMO_ONLY = new Set(['@/demo/sqljs', '@/demo/replay', '@/demo/fixtures/recording.json']);
 
 if (process.env.EXPO_PUBLIC_DEMO !== '1') {

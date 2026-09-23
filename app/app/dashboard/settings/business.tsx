@@ -56,6 +56,10 @@ interface Draft {
   revenue: string;
   sessions: string;
   clients: string;
+  vatRegistered: boolean;
+  trn: string;
+  vatRate: string;
+  pricesIncludeVat: boolean;
 }
 
 function draftOf(s: Settings): Draft {
@@ -81,6 +85,10 @@ function draftOf(s: Settings): Draft {
     revenue: s.targets.monthly_revenue_minor === undefined ? '' : amountText(s.targets.monthly_revenue_minor, s.currency),
     sessions: target(s.targets.weekly_sessions),
     clients: target(s.targets.active_clients),
+    vatRegistered: s.vat_registered,
+    trn: s.trn ?? '',
+    vatRate: String(s.vat_rate_bp / 100),
+    pricesIncludeVat: s.prices_include_vat,
   };
 }
 
@@ -155,6 +163,16 @@ export default function BusinessSettingsScreen() {
       weekly_sessions: saved.targets.weekly_sessions,
       active_clients: saved.targets.active_clients,
     })) patch.targets = targets;
+
+    const rateBp = Math.round(Number(draft.vatRate.replace(',', '.')) * 100);
+    if (!Number.isFinite(rateBp)) {
+      setError(t('onboarding.rateInvalid'));
+      return;
+    }
+    if (draft.vatRegistered !== saved.vat_registered) patch.vat_registered = draft.vatRegistered;
+    if (draft.trn.trim() !== (saved.trn ?? '')) patch.trn = draft.trn.trim();
+    if (rateBp !== saved.vat_rate_bp) patch.vat_rate_bp = rateBp;
+    if (draft.pricesIncludeVat !== saved.prices_include_vat) patch.prices_include_vat = draft.pricesIncludeVat;
 
     if (Object.keys(patch).length === 0) return;
     setSaving(true);
@@ -237,6 +255,20 @@ export default function BusinessSettingsScreen() {
             value={draft.language}
             onChange={(v) => set('language', v)}
           />
+        </Section>
+
+        <Section title={t('onboarding.vat.title')} detail={t('onboarding.vat.body')}>
+          <Toggle label={t('onboarding.vat.registered')} value={draft.vatRegistered} onChange={(v) => set('vatRegistered', v)} />
+          {draft.vatRegistered ? (
+            <>
+              <Spacer />
+              <Field label={t('onboarding.vat.trn')} value={draft.trn} onChangeText={(v) => set('trn', v)} keyboardType="number-pad" autoCapitalize="none" hint={t('onboarding.vat.trnHint')} />
+            </>
+          ) : null}
+          <Spacer />
+          <Row><NumberField label={t('onboarding.vat.rate')} value={draft.vatRate} onChangeText={(v) => set('vatRate', v)} /></Row>
+          <Spacer />
+          <Toggle label={t('packages.includesVat')} hint={t('packages.includesVatHint')} value={draft.pricesIncludeVat} onChange={(v) => set('pricesIncludeVat', v)} />
         </Section>
 
         <Section title={t('business.week')}>

@@ -1301,7 +1301,8 @@ export interface paths {
          * @description Owner only. Fields left out are left alone.
          *
          *     Setting `country` also sets `week_start` to that country's (Sunday in
-         *     Saudi Arabia, Monday in the UAE) unless the same change names one.
+         *     Saudi Arabia, Monday in the UAE) and `vat_rate_bp` to its standard
+         *     rate, unless the same change names them.
          *     `currency` answers `409 currency_locked` once money has been recorded.
          */
         patch: {
@@ -1331,6 +1332,46 @@ export interface paths {
                 409: components["responses"]["Conflict"];
             };
         };
+        trace?: never;
+    };
+    "/v1/settings/onboarded": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish setting up the practice
+         * @description Owner only. Idempotent; the first time stands.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Settings"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/subscription": {
@@ -4891,6 +4932,17 @@ export interface components {
             allow_overdraft?: boolean;
             no_show_is_billable?: boolean;
             low_balance_threshold?: number;
+            vat_registered?: boolean;
+            /** @description Tax registration number */
+            trn?: string | null;
+            /** @description Basis points: 500 is 5% */
+            vat_rate_bp?: number;
+            prices_include_vat?: boolean;
+            /**
+             * Format: date-time
+             * @description When the owner finished setting up; the app walks them through it until then.
+             */
+            onboarded_at?: string | null;
         };
         SettingsPatch: {
             business_name?: string;
@@ -4912,6 +4964,12 @@ export interface components {
             allow_overdraft?: boolean;
             no_show_is_billable?: boolean;
             low_balance_threshold?: number;
+            /** @description Needs a TRN */
+            vat_registered?: boolean;
+            /** @description Fifteen digits; beginning 100 in the UAE, beginning and ending 3 in Saudi Arabia. Spaces and dashes are ignored; empty clears it. */
+            trn?: string;
+            vat_rate_bp?: number;
+            prices_include_vat?: boolean;
         };
         Subscription: {
             /** @enum {string} */
