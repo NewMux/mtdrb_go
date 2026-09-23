@@ -36,6 +36,18 @@ only feature that needs it — nothing in the walkthrough below does.
 
 </details>
 
+### The worker
+
+```bash
+make worker   # scheduled jobs, against the local stack
+```
+
+Today it retires packs whose expiry date has passed, a quarter past midnight
+in each practice's own time zone, moving their unused value out of Deferred
+Revenue. Run as many as you like: one leads (a Postgres advisory lock) and
+every job claims its run in `job_runs`, so nothing happens twice. It needs
+only `DATABASE_URL`; `JOB_INTERVAL` (default `1m`) is how often it looks.
+
 ### Email, plans and the admin tool
 
 **Password-reset email.** With no `SMTP_HOST` set, the API writes each email

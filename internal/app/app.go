@@ -16,6 +16,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
+	"github.com/NewMux/mtdrb_go/internal/jobs"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
 	"github.com/NewMux/mtdrb_go/internal/mail"
 	"github.com/NewMux/mtdrb_go/internal/media"
@@ -113,6 +114,14 @@ func New(o Options) *Services {
 	s.Sync = sync.NewService(wall)
 	s.Dashboard = dashboard.NewService(s.Billing, s.Ledger, wall)
 	return s
+}
+
+// Jobs is every scheduled job, for the worker. Order is the order they run
+// in within a tick.
+func (s *Services) Jobs() []jobs.Job {
+	return []jobs.Job{
+		jobs.PackageExpiry(s.Billing),
+	}
 }
 
 // Handlers assembles the HTTP handlers the router mounts.

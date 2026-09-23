@@ -1,20 +1,27 @@
-// Command worker runs CoachPulse's scheduled jobs: recurring invoice drafts,
-// overdue transitions and package expiry.
+// Command worker runs CoachPulse's scheduled jobs.
 //
-// The job handlers arrive with the billing engine (M5). This entrypoint
-// establishes the process shape — configuration, pool, signal handling — so
-// that the deployment target exists before the work that fills it.
+// Any number of copies may run; one leads at a time (see package jobs), and
+// every job is safe to run twice, so a deploy that overlaps old and new
+// workers, or a crash halfway through a sweep, costs nothing.
+//
+//	DATABASE_URL=postgres://coachpulse_app:…@…/coachpulse go run ./cmd/worker
+//
+// Jobs today: package expiry, a quarter past each practice's local midnight.
 package main
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/NewMux/mtdrb_go/internal/app"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/db"
+	"github.com/NewMux/mtdrb_go/internal/jobs"
+	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
 )
 
@@ -26,7 +33,7 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
+	cfg, err := config.LoadWorker()
 	if err != nil {
 		return err
 	}
@@ -47,8 +54,12 @@ func run() error {
 	}
 	defer pool.Close()
 
-	log.Info("worker started; no job handlers registered yet")
-	<-ctx.Done()
+	wall := clock.System{}
+	services := app.New(app.Options{Pool: pool, Clock: wall})
+	runner := jobs.NewRunner(pool, wall, log, cfg.JobInterval, services.Jobs()...)
+
+	log.Info("worker started", slog.Duration("interval", cfg.JobInterval))
+	err = runner.Run(ctx)
 	log.Info("worker stopped")
-	return nil
+	return err
 }

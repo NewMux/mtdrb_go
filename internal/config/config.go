@@ -60,6 +60,9 @@ type Config struct {
 
 	LogLevel  string
 	LogFormat string
+
+	// JobInterval is how often the leading worker looks for due jobs.
+	JobInterval time.Duration
 }
 
 // IsProduction reports whether relaxed development behaviour must be disabled.
@@ -69,9 +72,22 @@ type loader struct {
 	problems []string
 }
 
-// Load reads configuration from the process environment.
-func Load() (Config, error) {
+// Load reads the API's configuration from the process environment.
+func Load() (Config, error) { return load(true) }
+
+// LoadWorker reads the worker's configuration. The worker signs no tokens,
+// serves no media and sends no reset links, so it does not demand the keys
+// and servers that only the API uses: a worker that refuses to start for
+// want of an object-storage secret it never reads is a deployment chore, not
+// a safety check.
+func LoadWorker() (Config, error) { return load(false) }
+
+func load(api bool) (Config, error) {
 	l := &loader{}
+	required := l.required
+	if !api {
+		required = func(key string) string { return l.str(key, "") }
+	}
 	cfg := Config{
 		Env:             l.str("APP_ENV", "development"),
 		HTTPAddr:        l.str("HTTP_ADDR", ":8080"),
@@ -89,8 +105,8 @@ func Load() (Config, error) {
 		StorageEndpoint:  l.str("STORAGE_ENDPOINT", "localhost:9000"),
 		StorageRegion:    l.str("STORAGE_REGION", "us-east-1"),
 		StorageBucket:    l.str("STORAGE_BUCKET", "coachpulse"),
-		StorageAccessKey: l.required("STORAGE_ACCESS_KEY"),
-		StorageSecretKey: l.required("STORAGE_SECRET_KEY"),
+		StorageAccessKey: required("STORAGE_ACCESS_KEY"),
+		StorageSecretKey: required("STORAGE_SECRET_KEY"),
 		StorageUseSSL:    l.boolean("STORAGE_USE_SSL", false),
 		PresignTTL:       l.dur("PRESIGN_TTL", 5*time.Minute),
 
@@ -107,10 +123,14 @@ func Load() (Config, error) {
 
 		LogLevel:  l.str("LOG_LEVEL", "info"),
 		LogFormat: l.str("LOG_FORMAT", "json"),
+
+		JobInterval: l.dur("JOB_INTERVAL", time.Minute),
 	}
 
-	cfg.JWTSigningKey = l.secret("JWT_SIGNING_KEY", 32)
-	cfg.ColumnEncryptionKey = l.secret("COLUMN_ENCRYPTION_KEY", 32)
+	if api {
+		cfg.JWTSigningKey = l.secret("JWT_SIGNING_KEY", 32)
+		cfg.ColumnEncryptionKey = l.secret("COLUMN_ENCRYPTION_KEY", 32)
+	}
 
 	switch cfg.Env {
 	case "development", "staging", "production":
@@ -120,7 +140,7 @@ func Load() (Config, error) {
 	if cfg.DBMinConns > cfg.DBMaxConns {
 		l.fail("DB_MIN_CONNS (%d) exceeds DB_MAX_CONNS (%d)", cfg.DBMinConns, cfg.DBMaxConns)
 	}
-	if cfg.IsProduction() {
+	if cfg.IsProduction() && api {
 		if !cfg.StorageUseSSL {
 			l.fail("STORAGE_USE_SSL must be true in production")
 		}

@@ -139,3 +139,18 @@ func TestConnPoolBoundsChecked(t *testing.T) {
 		t.Fatalf("expected pool bounds check, got %v", err)
 	}
 }
+
+func TestTheWorkerNeedsOnlyItsDatabase(t *testing.T) {
+	for _, key := range []string{"STORAGE_ACCESS_KEY", "STORAGE_SECRET_KEY", "JWT_SIGNING_KEY", "COLUMN_ENCRYPTION_KEY", "SMTP_HOST"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("DATABASE_URL", "postgres://worker@localhost/coachpulse")
+	t.Setenv("APP_ENV", "production")
+	if _, err := LoadWorker(); err != nil {
+		t.Fatalf("worker config: %v", err)
+	}
+	t.Setenv("DATABASE_URL", "")
+	if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("expected DATABASE_URL to be required, got %v", err)
+	}
+}
