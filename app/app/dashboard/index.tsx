@@ -14,28 +14,23 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { NetworkError } from '@/api/client';
 import type { DashboardSummary } from '@/api/types';
 import { lowBalanceClients, type LowBalanceClient } from '@/features/queries';
 import { useApp, useQuery } from '@/state/app';
-import {
-  Body, Caption, Card, Chip, Empty, Heading, Label, Metric,
-  Row, Screen, Spacer, Title,
-} from '@/ui/components';
-import { SyncBadge } from '@/ui/sync-badge';
+import { Body, Caption, Card, Chip, Empty, Heading, Label, Metric, Row, Spacer } from '@/ui/components';
+import { Page } from '@/ui/page';
 import { useT, type I18n } from '@/i18n';
 import { space } from '@/ui/theme';
-import { useTheme } from '@/ui/theming';
 
 export default function DashboardScreen() {
   const { api, account, sync, syncNow, revision } = useApp();
   const router = useRouter();
   const i18n = useT();
   const { t, amount, money, date } = i18n;
-  const { colors } = useTheme();
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,25 +70,12 @@ export default function DashboardScreen() {
     : (local.data ?? []);
 
   return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: 176 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={loading || sync.running}
-            onRefresh={() => { void load(); void syncNow(); }}
-            tintColor={colors.inkMuted}
-          />
-        }
-      >
-        <Row style={{ justifyContent: 'space-between' }}>
-          <View>
-            <Title>{t('practice.title')}</Title>
-            <Caption>{date(new Date(), 'month')}</Caption>
-          </View>
-          <SyncBadge />
-        </Row>
-
+    <Page
+      title={t('practice.title')}
+      subtitle={date(new Date(), 'month')}
+      refreshing={loading || sync.running}
+      onRefresh={() => { void load(); void syncNow(); }}
+    >
         <Spacer size={space.xl} />
 
         {summary ? (
@@ -126,7 +108,7 @@ export default function DashboardScreen() {
 
             <Spacer />
 
-            <Pressable accessibilityRole="button" onPress={() => router.push('/money')}>
+            <Pressable accessibilityRole="button" onPress={() => router.push('/dashboard/billing')}>
               <Card>
                 <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
                   <Metric value={i18n.number(summary.unpaid_invoices)} label={t('practice.unpaidInvoices')} />
@@ -165,7 +147,7 @@ export default function DashboardScreen() {
               key={client.id}
               accessibilityRole="button"
               accessibilityLabel={t('practice.creditsA11y', { name: client.fullName, count: client.creditsRemaining })}
-              onPress={() => router.push({ pathname: '/client/[id]', params: { id: client.id } })}
+              onPress={() => router.push({ pathname: '/dashboard/clients/[id]', params: { id: client.id } })}
               style={{ marginBottom: space.sm }}
             >
               <Card>
@@ -186,8 +168,7 @@ export default function DashboardScreen() {
             </Pressable>
           ))
         )}
-      </ScrollView>
-    </Screen>
+    </Page>
   );
 }
 

@@ -11,7 +11,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { markAttendance, startWorkout } from '@/features/actions';
@@ -19,14 +19,11 @@ import { openWorkout, todaysRoster, type RosterEntry } from '@/features/queries'
 import type { AttendanceStatus } from '@/api/types';
 import { useT } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
-import {
-  Avatar, Body, Button, Caption, Card, Chip, Empty, Heading, Label, Metric,
-  Pill, Progress, Row, Screen, Spacer, Title,
-} from '@/ui/components';
+import { Avatar, Body, Button, Caption, Card, Chip, Empty, Heading, Label, Metric, Pill, Progress, Row, Spacer, Title } from '@/ui/components';
 import { useConfirm } from '@/ui/overlay';
-import { SyncBadge } from '@/ui/sync-badge';
+import { Page } from '@/ui/page';
 import { space } from '@/ui/theme';
-import { makeStyles, useTheme } from '@/ui/theming';
+import { makeStyles } from '@/ui/theming';
 
 const OUTCOMES: AttendanceStatus[] = ['completed', 'no_show', 'late_cancel', 'early_cancel'];
 
@@ -35,7 +32,6 @@ export default function TodayScreen() {
   const router = useRouter();
   const confirm = useConfirm();
   const { t, time, date, number } = useT();
-  const { colors } = useTheme();
   const styles = useStyles();
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -76,7 +72,7 @@ export default function TodayScreen() {
         { value: 'overdraft', label: t('today.completeAnyway') },
       ],
     });
-    if (choice === 'renew') router.push({ pathname: '/client/[id]', params: { id: entry.clientId } });
+    if (choice === 'renew') router.push({ pathname: '/dashboard/clients/[id]', params: { id: entry.clientId } });
     else if (choice === 'overdraft') void mark(entry, 'completed', true);
   };
 
@@ -98,28 +94,20 @@ export default function TodayScreen() {
   const firstName = (account?.display_name ?? '').split(' ')[0] || t('today.greetingFallback');
 
   return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        refreshControl={
-          <RefreshControl
-            refreshing={sync.running}
-            onRefresh={() => { void syncNow(); }}
-            tintColor={colors.inkMuted}
-          />
-        }
-      >
-        <Row style={{ justifyContent: 'space-between' }}>
-          <Row>
-            <Avatar name={account?.display_name ?? firstName} size={46} self />
-            <View>
-              <Title>{t('today.greeting', { name: firstName })}</Title>
-              <Caption>{date(new Date(), 'long')}</Caption>
-            </View>
-          </Row>
-          <SyncBadge />
+    <Page
+      title={t('nav.today')}
+      refreshing={sync.running}
+      onRefresh={() => { void syncNow(); }}
+      header={(
+        <Row>
+          <Avatar name={account?.display_name ?? firstName} size={46} self />
+          <View>
+            <Title>{t('today.greeting', { name: firstName })}</Title>
+            <Caption>{date(new Date(), 'long')}</Caption>
+          </View>
         </Row>
-
+      )}
+    >
         <Spacer size={space.xl} />
 
         {/* The day at a glance. Lime because getting through the roster is the
@@ -208,7 +196,7 @@ export default function TodayScreen() {
                         <Button
                           label={t('today.profile')}
                           tone="quiet"
-                          onPress={() => router.push({ pathname: '/client/[id]', params: { id: entry.clientId } })}
+                          onPress={() => router.push({ pathname: '/dashboard/clients/[id]', params: { id: entry.clientId } })}
                         />
                       </Row>
                     </>
@@ -225,8 +213,7 @@ export default function TodayScreen() {
             <Body muted>{t('today.pendingChanges', { count: sync.pending })}</Body>
           </>
         ) : null}
-      </ScrollView>
-    </Screen>
+    </Page>
   );
 }
 
@@ -239,8 +226,6 @@ function StatusPill({ status }: { status: AttendanceStatus }) {
 }
 
 const useStyles = makeStyles(({ colors, type }) => ({
-  // Bottom padding clears the tab bar and the circle above it.
-  scroll: { padding: space.lg, paddingTop: space.xl, paddingBottom: 176 },
   time: { ...type.heading, color: colors.inkMuted, minWidth: 48 },
   name: { ...type.title, color: colors.ink, flexShrink: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },

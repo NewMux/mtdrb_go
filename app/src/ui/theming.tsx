@@ -7,7 +7,7 @@
  */
 
 import React, { createContext, useContext } from 'react';
-import { StyleSheet, type TextStyle } from 'react-native';
+import { Platform, StyleSheet, type TextStyle } from 'react-native';
 
 import { palettes, type as baseType, type ColorScheme, type Palette } from './theme';
 
@@ -29,17 +29,24 @@ export function themeFor(scheme: ColorScheme, isRTL: boolean): Theme {
   const key = `${scheme}:${isRTL ? 'rtl' : 'ltr'}`;
   const cached = themes.get(key);
   if (cached) return cached;
+  // Text aligns to the start edge whatever script it is written in: a Latin
+  // client name in an Arabic list belongs on the right. A phone swaps left
+  // and right itself under forceRTL; the web does not, so it is told.
+  const start: TextStyle = { textAlign: Platform.OS === 'web' && isRTL ? 'right' : 'left' };
+  const ramp = Object.fromEntries(
+    Object.entries(baseType).map(([name, style]) => [name, { ...style, ...start }]),
+  ) as unknown as typeof baseType;
   const theme: Theme = {
     scheme,
     colors: palettes[scheme],
     isRTL,
     type: {
-      ...baseType,
+      ...ramp,
       // Arabic letters join and have no case: tracking breaks words apart
       // and uppercasing does nothing, so an Arabic label is just bold.
       label: isRTL
-        ? { fontSize: 12, fontWeight: '700', letterSpacing: 0 }
-        : { ...baseType.label, textTransform: 'uppercase' },
+        ? { fontSize: 12, fontWeight: '700', letterSpacing: 0, ...start }
+        : { ...baseType.label, textTransform: 'uppercase', ...start },
     },
   };
   themes.set(key, theme);

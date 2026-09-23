@@ -13,6 +13,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
+import { isHeldByAnotherTab } from '@/db/errors';
 import { useT } from '@/i18n';
 import { AppProvider, useApp } from '@/state/app';
 import { PreferencesProvider } from '@/state/preferences';
@@ -51,6 +52,15 @@ function Shell() {
 
   // No local database means no app: every screen reads from it. Saying so
   // beats a spinner that never stops.
+  if (fatal && isHeldByAnotherTab(fatal)) {
+    return (
+      <View style={styles.centre}>
+        <Text style={styles.fatalTitle}>{t('shell.otherTabTitle')}</Text>
+        <Text style={styles.fatalBody}>{t('shell.otherTabBody')}</Text>
+      </View>
+    );
+  }
+
   if (fatal) {
     return (
       <View style={styles.centre}>
@@ -84,10 +94,10 @@ function Shell() {
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="dashboard" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
-        <Stack.Screen name="client/[id]" options={{ title: t('client.title') }} />
-        <Stack.Screen name="client/new" options={{ title: t('newClient.title'), presentation: 'modal' }} />
+        <Stack.Screen name="+not-found" options={{ headerShown: false }} />
         <Stack.Screen name="workout/[id]" options={{ title: t('workout.fallbackTitle') }} />
         <Stack.Screen name="sell-package" options={{ title: t('sellPackage.title'), presentation: 'modal' }} />
         <Stack.Screen name="sync" options={{ title: t('syncScreen.title'), presentation: 'modal' }} />

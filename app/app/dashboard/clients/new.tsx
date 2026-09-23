@@ -38,7 +38,7 @@ export default function NewClientScreen() {
     setBusy(false);
     // Replaced rather than pushed, so backing out of the profile does not
     // return to a form that has already been submitted.
-    router.replace({ pathname: '/client/[id]', params: { id } });
+    router.replace({ pathname: '/dashboard/clients/[id]', params: { id } });
   };
 
   return (

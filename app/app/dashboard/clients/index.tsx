@@ -6,16 +6,15 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { listClients } from '@/features/queries';
 import { useT, type I18n } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
-import {
-  Avatar, Body, Caption, Card, Chip, Empty, Label, Row, Screen, SearchField, Spacer, Title,
-} from '@/ui/components';
-import { SyncBadge } from '@/ui/sync-badge';
+import { Avatar, Body, Button, Caption, Card, Chip, Empty, Label, Row, SearchField, Spacer } from '@/ui/components';
+import { useLayout } from '@/ui/layout';
+import { Page } from '@/ui/page';
 import { space } from '@/ui/theme';
 
 export default function ClientsScreen() {
@@ -23,6 +22,7 @@ export default function ClientsScreen() {
   const { sync } = useApp();
   const i18n = useT();
   const { t } = i18n;
+  const { wide } = useLayout();
   const [search, setSearch] = useState('');
 
   const clients = useQuery((db) => listClients(db, search), [search]);
@@ -31,19 +31,14 @@ export default function ClientsScreen() {
   const rows = clients.data ?? [];
 
   return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: 176 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Row style={{ justifyContent: 'space-between' }}>
-          <View>
-            <Title>{t('clients.title')}</Title>
-            <Caption>{t('clients.onRoster', { count: rows.length })}</Caption>
-          </View>
-          <SyncBadge />
-        </Row>
-
+    <Page
+      title={t('clients.title')}
+      subtitle={t('clients.onRoster', { count: rows.length })}
+      actions={wide ? (
+        // The phone has its floating button; a desk looks for the action here.
+        <Button compact tone="primary" icon="add" label={t('nav.addClient')} onPress={() => router.push('/dashboard/clients/new')} />
+      ) : undefined}
+    >
         <Spacer />
         <SearchField
           label={t('common.search')}
@@ -67,7 +62,7 @@ export default function ClientsScreen() {
               key={client.id}
               accessibilityRole="button"
               accessibilityLabel={client.fullName}
-              onPress={() => router.push({ pathname: '/client/[id]', params: { id: client.id } })}
+              onPress={() => router.push({ pathname: '/dashboard/clients/[id]', params: { id: client.id } })}
               style={{ marginBottom: space.sm }}
             >
               <Card>
@@ -98,8 +93,7 @@ export default function ClientsScreen() {
             <Caption>{t('clients.deviceCopy')}</Caption>
           </>
         ) : null}
-      </ScrollView>
-    </Screen>
+    </Page>
   );
 }
 

@@ -48,6 +48,35 @@ export const en = {
     addClient: 'Add client',
   },
 
+  navGroup: {
+    day: 'Your day',
+    people: 'Clients & training',
+    money: 'Money',
+    insight: 'How it is going',
+    setup: 'Set-up',
+  },
+
+  blurb: {
+    today: 'Who is in front of you, and marking each session as it ends.',
+    dashboard: 'The practice at a glance: earnings, bookings and who needs renewing.',
+    clients: 'Everyone you train, what they hold and what they owe.',
+    calendar: 'Book, move and cancel sessions, and see the week ahead.',
+    programs: 'Build training programmes and assign them to clients.',
+    billing: 'Invoices, payments, expenses and your VAT return.',
+    shop: 'Sell supplements, bands and kit, with stock that keeps itself.',
+    packages: 'The session packs and coaching plans you sell.',
+    analytics: 'Revenue, retention and sessions over time.',
+    insights: 'What the numbers suggest doing next.',
+    tasks: 'Follow-ups, renewals and reminders, some created for you.',
+    locations: 'The studios, gyms and places you train.',
+    settings: 'Your business, VAT, security and subscription.',
+  },
+
+  more: {
+    title: 'More',
+    account: 'Account and this device',
+  },
+
   attendance: {
     scheduled: 'Scheduled',
     completed: 'Completed',
@@ -327,6 +356,9 @@ export const en = {
   },
 
   shell: {
+    comingTitle: 'Arriving in this build',
+    otherTabTitle: 'CoachPulse is open in another tab',
+    otherTabBody: 'A browser lets one tab at a time hold the practice’s local copy. Close the other tab, then reload this one.',
     storageTitle: 'Can’t open storage',
     storageBody: 'CoachPulse keeps everything on the device, and this browser will not let it.',
   },

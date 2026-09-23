@@ -14,7 +14,7 @@ import React, {
 import { AppState as RNAppState, type AppStateStatus } from 'react-native';
 import Constants from 'expo-constants';
 
-import { ApiClient } from '@/api/client';
+import { ApiClient, NetworkError } from '@/api/client';
 import type { Account } from '@/api/types';
 import { openDatabase } from '@/db';
 import { getMeta, setMeta, type Database } from '@/db/types';
@@ -323,4 +323,64 @@ export function useQuery<T>(
 
   const reload = useCallback(() => setLocal((n) => n + 1), []);
   return { data, loading, error, reload };
+}
+
+export interface RemoteResult<T> {
+  data: T | null;
+  loading: boolean;
+  /** True when the last attempt failed for want of a connection — the ordinary case offline. */
+  offline: boolean;
+  error: Error | null;
+  reload: () => void;
+}
+
+/**
+ * Reads something only the server can answer — a P&L, a VAT return.
+ *
+ * The sibling of `useQuery` for numbers that are ledger arithmetic and
+ * meaningless stale. A connection failure is reported as `offline` rather
+ * than as an error, so the screen can say "needs a connection" once instead
+ * of showing a fault; anything else is a real error and surfaces as one.
+ * The last good answer is kept while a reload is in flight.
+ */
+export function useRemote<T>(
+  run: (api: ApiClient) => Promise<T>,
+  deps: React.DependencyList = [],
+): RemoteResult<T> {
+  const { api, revision } = useApp();
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [local, setLocal] = useState(0);
+
+  const runRef = useRef(run);
+  runRef.current = run;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    runRef.current(api)
+      .then((result) => {
+        if (cancelled) return;
+        setData(result);
+        setOffline(false);
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        if (cause instanceof NetworkError) {
+          setOffline(true);
+          setError(null);
+        } else {
+          setError(cause instanceof Error ? cause : new Error(String(cause)));
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, revision, local, ...deps]);
+
+  const reload = useCallback(() => setLocal((n) => n + 1), []);
+  return { data, loading, offline, error, reload };
 }

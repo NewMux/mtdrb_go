@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { recordPayment } from '@/features/actions';
@@ -21,15 +21,11 @@ import { outstandingInvoices, type InvoiceSummary } from '@/features/queries';
 import type { PaymentInstrument } from '@/api/types';
 import { useT } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
-import {
-  Body, Button, Caption, Card, Empty, Field, Label, Metric, NumberField,
-  Row, Screen, SegmentedChoice, Spacer, Title,
-} from '@/ui/components';
-import { SyncBadge } from '@/ui/sync-badge';
+import { Body, Button, Caption, Card, Empty, Field, Label, Metric, NumberField, Row, SegmentedChoice, Spacer } from '@/ui/components';
+import { Page } from '@/ui/page';
 import { amountText, parseMoney } from '@/ui/format';
 import { daysUntil } from '@/i18n';
 import { space } from '@/ui/theme';
-import { useTheme } from '@/ui/theming';
 
 const INSTRUMENTS: readonly PaymentInstrument[] = ['bank_transfer', 'cash', 'digital_wallet', 'cheque'];
 
@@ -37,7 +33,6 @@ export default function MoneyScreen() {
   const { db, account, touch, syncNow, sync } = useApp();
   const i18n = useT();
   const { t, money, amount: formatAmount } = i18n;
-  const { colors } = useTheme();
   const instruments = INSTRUMENTS.map((value) => ({ value, label: t(`instruments.${value}`) }));
 
   const [open, setOpen] = useState<string | null>(null);
@@ -91,26 +86,12 @@ export default function MoneyScreen() {
   };
 
   return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: 176 }}
-        keyboardShouldPersistTaps="handled"
-        refreshControl={
-          <RefreshControl
-            refreshing={sync.running}
-            onRefresh={() => { void syncNow(); }}
-            tintColor={colors.inkMuted}
-          />
-        }
-      >
-        <Row style={{ justifyContent: 'space-between' }}>
-          <View>
-            <Title>{t('money.title')}</Title>
-            <Caption>{t('money.outstanding', { count: rows.length })}</Caption>
-          </View>
-          <SyncBadge />
-        </Row>
-
+    <Page
+      title={t('money.title')}
+      subtitle={t('money.outstanding', { count: rows.length })}
+      refreshing={sync.running}
+      onRefresh={() => { void syncNow(); }}
+    >
         <Spacer size={space.lg} />
         <Card tone="accent">
           {totals.length === 0 ? (
@@ -204,7 +185,6 @@ export default function MoneyScreen() {
             );
           })
         )}
-      </ScrollView>
-    </Screen>
+    </Page>
   );
 }
