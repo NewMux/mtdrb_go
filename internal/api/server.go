@@ -11,6 +11,7 @@ import (
 
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/billing"
+	"github.com/NewMux/mtdrb_go/internal/catalog"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/dashboard"
@@ -44,6 +45,7 @@ type Deps struct {
 	Sync         *sync.Handler
 	Dashboard    *dashboard.Handler
 	Settings     *settings.Handler
+	Catalog      *catalog.Handler
 	Subscription *subscription.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
@@ -129,6 +131,8 @@ func (s *Server) routes(deps Deps) chi.Router {
 					trainer.Mount("/payment-methods", deps.Billing.PaymentMethodRoutes())
 					trainer.Mount("/receivables", deps.Billing.ReceivablesRoutes())
 					trainer.Mount("/programs", deps.Programming.ProgramRoutes())
+					trainer.Mount("/locations", deps.Catalog.LocationRoutes())
+					trainer.Mount("/package-offers", deps.Catalog.OfferRoutes())
 
 					// Trainer-only: it carries revenue and receivables, which a
 					// portal client must never see.

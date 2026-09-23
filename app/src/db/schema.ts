@@ -30,6 +30,8 @@ export const SYNC_TABLES = [
   'workout_sessions',
   'set_logs',
   'settings',
+  'locations',
+  'package_offers',
 ] as const;
 
 export type SyncTable = (typeof SYNC_TABLES)[number];
@@ -230,6 +232,28 @@ export const UPGRADES: SchemaUpgrade[] = [
          cancel_at_period_end INTEGER, updated_at TEXT
        )`,
     ],
+  },
+  {
+    // Where the practice works and what it sells. Sessions gain the place
+    // they were booked at; the device already holds its sessions without
+    // the column, so they are pulled again.
+    version: 3,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS locations (
+         id TEXT PRIMARY KEY NOT NULL,
+         name TEXT NOT NULL, kind TEXT, address TEXT, region TEXT, colour TEXT,
+         is_primary INTEGER, archived_at TEXT, updated_at TEXT
+       )`,
+      `CREATE TABLE IF NOT EXISTS package_offers (
+         id TEXT PRIMARY KEY NOT NULL,
+         name TEXT NOT NULL, description TEXT, kind TEXT, credits INTEGER,
+         price_minor INTEGER, currency TEXT, price_includes_vat INTEGER,
+         validity_days INTEGER, cycle TEXT, session_type_id TEXT,
+         sort_order INTEGER, archived_at TEXT, updated_at TEXT
+       )`,
+      `ALTER TABLE sessions ADD COLUMN location_id TEXT`,
+    ],
+    resync: ['sessions'],
   },
 ];
 

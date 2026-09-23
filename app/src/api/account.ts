@@ -16,3 +16,7 @@ export type Subscription = Required<Schema<'Subscription'>>;
 export type Profile = Required<Schema<'Profile'>>;
 export type Device = Required<Schema<'Device'>>;
 export type MFASetup = Required<Schema<'MFASetup'>>;
+export type Location = Required<Schema<'Location'>>;
+export type LocationInput = Schema<'LocationInput'>;
+export type PackageOffer = Required<Schema<'PackageOffer'>>;
+export type PackageOfferInput = Schema<'PackageOfferInput'>;

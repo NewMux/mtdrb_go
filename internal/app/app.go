@@ -13,6 +13,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/api"
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/billing"
+	"github.com/NewMux/mtdrb_go/internal/catalog"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
@@ -130,6 +131,7 @@ func (s *Services) Handlers() api.Deps {
 	deps := api.Deps{
 		Auth:         auth.NewHandler(s.Auth, s.authOptions),
 		Settings:     settings.NewHandler(pool),
+		Catalog:      catalog.NewHandler(pool, s.Clock),
 		Subscription: subscription.NewHandler(pool, s.Clock),
 		Clock:        s.Clock,
 		CRM:          crm.NewHandler(s.CRM, pool),

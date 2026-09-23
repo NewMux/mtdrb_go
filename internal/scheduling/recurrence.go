@@ -21,12 +21,13 @@ type RecurInput struct {
 	SessionTypeID ids.ID
 	ClientIDs     []ids.ID
 	// Weekdays uses ISO numbering, 1 = Monday.
-	Weekdays  []int
-	StartsOn  time.Time
-	EndsOn    time.Time
-	TimeOfDay time.Duration
-	Timezone  string
-	Location  string
+	Weekdays   []int
+	StartsOn   time.Time
+	EndsOn     time.Time
+	TimeOfDay  time.Duration
+	Timezone   string
+	LocationID *ids.ID
+	Location   string
 }
 
 // RecurResult reports what a series produced.
@@ -131,6 +132,7 @@ func (s *Service) Recur(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Recu
 			SessionTypeID: in.SessionTypeID,
 			StartsAt:      startsAt,
 			ClientIDs:     in.ClientIDs,
+			LocationID:    in.LocationID,
 			Location:      in.Location,
 		})
 		if err == nil {

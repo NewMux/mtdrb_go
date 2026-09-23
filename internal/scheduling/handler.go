@@ -148,6 +148,7 @@ func (h *Handler) bookSession(w http.ResponseWriter, r *http.Request) {
 		SessionTypeID ids.ID    `json:"session_type_id"`
 		StartsAt      time.Time `json:"starts_at"`
 		ClientIDs     []ids.ID  `json:"client_ids"`
+		LocationID    *ids.ID   `json:"location_id"`
 		Location      string    `json:"location"`
 		Notes         string    `json:"notes"`
 	}
@@ -160,6 +161,7 @@ func (h *Handler) bookSession(w http.ResponseWriter, r *http.Request) {
 			SessionTypeID: req.SessionTypeID,
 			StartsAt:      req.StartsAt,
 			ClientIDs:     req.ClientIDs,
+			LocationID:    req.LocationID,
 			Location:      req.Location,
 			Notes:         req.Notes,
 		})
@@ -289,6 +291,7 @@ func (h *Handler) recur(w http.ResponseWriter, r *http.Request) {
 		EndsOn        dates.Date `json:"ends_on"`
 		TimeOfDay     string     `json:"time_of_day"`
 		Timezone      string     `json:"timezone"`
+		LocationID    *ids.ID    `json:"location_id"`
 		Location      string     `json:"location"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
@@ -310,6 +313,7 @@ func (h *Handler) recur(w http.ResponseWriter, r *http.Request) {
 			EndsOn:        req.EndsOn.Time(),
 			TimeOfDay:     timeOfDay,
 			Timezone:      req.Timezone,
+			LocationID:    req.LocationID,
 			Location:      req.Location,
 		})
 		if err != nil {

@@ -76,8 +76,15 @@ var collections = []collection{
 	{"session_types", "session_types", `id, name, duration_minutes, capacity, credit_cost,
 		colour, archived_at`},
 
+	{"locations", "locations", `id, name, kind::text AS kind, address, region, colour,
+		is_primary, archived_at, updated_at`},
+
+	{"package_offers", "package_offers", `id, name, description, kind::text AS kind, credits,
+		price_minor, currency, price_includes_vat, validity_days, cycle::text AS cycle,
+		session_type_id, sort_order, archived_at, updated_at`},
+
 	{"sessions", "sessions", `id, session_type_id, series_id, starts_at, ends_at,
-		status::text AS status, location, notes, created_at, updated_at`},
+		status::text AS status, location, location_id, notes, created_at, updated_at`},
 
 	{"session_attendees", "session_attendees", `id, session_id, client_id,
 		status::text AS status, credits_charged, marked_at, notes, created_at, updated_at`},

@@ -46,6 +46,11 @@ tags:
   - name: Programming
   - name: Public
     description: The unauthenticated shared-invoice link.
+  - name: Catalogue
+    description: |
+      Where the practice works and what it sells. Both mirror to devices as
+      the `locations` and `package_offers` collections, and neither is ever
+      deleted: archiving keeps last year's sessions and invoices explained.
   - name: Settings
     description: How the practice runs. Mirrored to devices as the `settings`
       collection; changed by the owner.
@@ -426,6 +431,177 @@ paths:
       responses:
         "204": { description: Signed out }
 
+  /v1/locations:
+    get:
+      tags: [Catalogue]
+      summary: The practice's places, primary first
+      parameters:
+        - { name: include_archived, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Locations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locations:
+                    type: array
+                    items: { $ref: "#/components/schemas/Location" }
+    post:
+      tags: [Catalogue]
+      summary: Add a place
+      description: The first place a practice adds is its primary. Counts
+        against the plan's location limit (`plan_limit_reached`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocationInput" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Location" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/locations/{locationID}:
+    parameters:
+      - { name: locationID, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Catalogue]
+      summary: Change a place
+      description: Setting `is_primary` moves the primary here from wherever it was.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocationInput" }
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Location" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/locations/{locationID}/archive:
+    parameters:
+      - { name: locationID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Catalogue]
+      summary: Retire a place
+      description: Its sessions keep pointing at it. The primary cannot be
+        archived while another place could take over.
+      responses:
+        "200":
+          description: Archived
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Location" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/locations/{locationID}/restore:
+    parameters:
+      - { name: locationID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Catalogue]
+      summary: Bring a place back
+      responses:
+        "200":
+          description: Restored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Location" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/package-offers:
+    get:
+      tags: [Catalogue]
+      summary: The price list
+      parameters:
+        - { name: include_archived, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Offers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offers:
+                    type: array
+                    items: { $ref: "#/components/schemas/PackageOffer" }
+    post:
+      tags: [Catalogue]
+      summary: Add an offer
+      description: Priced in the practice's currency. A session pack needs a
+        number of sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PackageOfferInput" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageOffer" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/package-offers/{offerID}:
+    parameters:
+      - { name: offerID, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Catalogue]
+      summary: Change an offer
+      description: What was already sold keeps the terms it was sold on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PackageOfferInput" }
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageOffer" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/package-offers/{offerID}/archive:
+    parameters:
+      - { name: offerID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Catalogue]
+      summary: Take an offer off the sell screen
+      responses:
+        "200":
+          description: Archived
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageOffer" }
+
+  /v1/package-offers/{offerID}/restore:
+    parameters:
+      - { name: offerID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Catalogue]
+      summary: Put an offer back
+      responses:
+        "200":
+          description: Restored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageOffer" }
+
   /v1/settings:
     get:
       tags: [Settings]
@@ -734,7 +910,12 @@ paths:
                 client_ids:
                   type: array
                   items: { type: string, format: uuid }
-                location: { type: string }
+                location_id:
+                  type: string
+                  format: uuid
+                  description: One of the practice's locations; its name is
+                    copied into `location`. Archived locations are refused.
+                location: { type: string, description: Free text, when no location_id is given }
                 notes: { type: string }
       responses:
         "201":
@@ -1761,6 +1942,7 @@ paths:
                 ends_on: { type: string, format: date }
                 time_of_day: { type: string, examples: ["07:30"] }
                 timezone: { type: string, examples: [Asia/Dubai] }
+                location_id: { type: string, format: uuid }
                 location: { type: string }
       responses:
         "201":
@@ -2161,6 +2343,62 @@ components:
               description: When this device is signed out if unused — the
                 practice's session timeout from now.
 
+    Location:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [studio, gym, outdoor, client_home, online] }
+        address: { type: string }
+        region: { type: string, description: Emirate or region }
+        colour: { type: [string, "null"], examples: ["#c8ff00"] }
+        is_primary: { type: boolean }
+        archived_at: { type: [string, "null"], format: date-time }
+
+    LocationInput:
+      type: object
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [studio, gym, outdoor, client_home, online] }
+        address: { type: string }
+        region: { type: string }
+        colour: { type: string, description: "#rrggbb, or empty for none" }
+        is_primary: { type: boolean }
+
+    PackageOffer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        kind: { type: string, enum: [session_pack, monthly_coaching, online_coaching, semi_private] }
+        credits: { type: [integer, "null"], description: Sessions included; null for coaching sold by time }
+        price_minor: { type: integer, format: int64 }
+        currency: { type: string }
+        price_includes_vat: { type: boolean }
+        validity_days: { type: [integer, "null"], description: Days the credits last; null never expires }
+        cycle: { type: string, enum: [one_off, weekly, monthly, annual] }
+        session_type_id: { type: [string, "null"], format: uuid }
+        sort_order: { type: integer }
+        archived_at: { type: [string, "null"], format: date-time }
+
+    PackageOfferInput:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        kind: { type: string, enum: [session_pack, monthly_coaching, online_coaching, semi_private] }
+        credits: { type: integer, minimum: 1 }
+        clear_credits: { type: boolean }
+        price_minor: { type: integer, format: int64, minimum: 0 }
+        price_includes_vat: { type: boolean }
+        validity_days: { type: integer, minimum: 1 }
+        clear_validity: { type: boolean }
+        cycle: { type: string, enum: [one_off, weekly, monthly, annual] }
+        session_type_id: { type: string, format: uuid }
+        clear_session_type: { type: boolean }
+        sort_order: { type: integer }
+
     Profile:
       type: object
       properties:
@@ -2469,7 +2707,10 @@ components:
         starts_at: { type: string, format: date-time }
         ends_at: { type: string, format: date-time }
         status: { type: string, enum: [scheduled, cancelled] }
-        location: { type: string }
+        location_id: { type: [string, "null"], format: uuid }
+        location:
+          type: string
+          description: The place's name as it was at booking, or free text.
         notes: { type: string }
         attendees:
           type: array

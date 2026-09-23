@@ -861,6 +861,408 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The practice's places, primary first */
+        get: {
+            parameters: {
+                query?: {
+                    include_archived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Locations */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            locations?: components["schemas"]["Location"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Add a place
+         * @description The first place a practice adds is its primary. Counts against the plan's location limit (`plan_limit_reached`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LocationInput"];
+                };
+            };
+            responses: {
+                /** @description Added */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Location"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/locations/{locationID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                locationID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a place
+         * @description Setting `is_primary` moves the primary here from wherever it was.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    locationID: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LocationInput"];
+                };
+            };
+            responses: {
+                /** @description Changed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Location"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        trace?: never;
+    };
+    "/v1/locations/{locationID}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                locationID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retire a place
+         * @description Its sessions keep pointing at it. The primary cannot be archived while another place could take over.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    locationID: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Location"];
+                    };
+                };
+                409: components["responses"]["Conflict"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/locations/{locationID}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                locationID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bring a place back */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    locationID: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Restored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Location"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/package-offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The price list */
+        get: {
+            parameters: {
+                query?: {
+                    include_archived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Offers */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            offers?: components["schemas"]["PackageOffer"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Add an offer
+         * @description Priced in the practice's currency. A session pack needs a number of sessions.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PackageOfferInput"];
+                };
+            };
+            responses: {
+                /** @description Added */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PackageOffer"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/package-offers/{offerID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                offerID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change an offer
+         * @description What was already sold keeps the terms it was sold on.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    offerID: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PackageOfferInput"];
+                };
+            };
+            responses: {
+                /** @description Changed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PackageOffer"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
+    "/v1/package-offers/{offerID}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                offerID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take an offer off the sell screen */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    offerID: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PackageOffer"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/package-offers/{offerID}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                offerID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put an offer back */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    offerID: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Restored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PackageOffer"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/settings": {
         parameters: {
             query?: never;
@@ -1489,6 +1891,12 @@ export interface paths {
                         /** Format: date-time */
                         starts_at: string;
                         client_ids?: string[];
+                        /**
+                         * Format: uuid
+                         * @description One of the practice's locations; its name is copied into `location`. Archived locations are refused.
+                         */
+                        location_id?: string;
+                        /** @description Free text */
                         location?: string;
                         notes?: string;
                     };
@@ -3672,6 +4080,8 @@ export interface paths {
                         time_of_day: string;
                         /** @example Asia/Dubai */
                         timezone: string;
+                        /** Format: uuid */
+                        location_id?: string;
                         location?: string;
                     };
                 };
@@ -4346,6 +4756,73 @@ export interface components {
                 refresh_expires_at?: string;
             };
         };
+        Location: {
+            /** Format: uuid */
+            id?: string;
+            name?: string;
+            /** @enum {string} */
+            kind?: "studio" | "gym" | "outdoor" | "client_home" | "online";
+            address?: string;
+            /** @description Emirate or region */
+            region?: string;
+            /** @example #c8ff00 */
+            colour?: string | null;
+            is_primary?: boolean;
+            /** Format: date-time */
+            archived_at?: string | null;
+        };
+        LocationInput: {
+            name?: string;
+            /** @enum {string} */
+            kind?: "studio" | "gym" | "outdoor" | "client_home" | "online";
+            address?: string;
+            region?: string;
+            /** @description #rrggbb, or empty for none */
+            colour?: string;
+            is_primary?: boolean;
+        };
+        PackageOffer: {
+            /** Format: uuid */
+            id?: string;
+            name?: string;
+            description?: string;
+            /** @enum {string} */
+            kind?: "session_pack" | "monthly_coaching" | "online_coaching" | "semi_private";
+            /** @description Sessions included; null for coaching sold by time */
+            credits?: number | null;
+            /** Format: int64 */
+            price_minor?: number;
+            currency?: string;
+            price_includes_vat?: boolean;
+            /** @description Days the credits last; null never expires */
+            validity_days?: number | null;
+            /** @enum {string} */
+            cycle?: "one_off" | "weekly" | "monthly" | "annual";
+            /** Format: uuid */
+            session_type_id?: string | null;
+            sort_order?: number;
+            /** Format: date-time */
+            archived_at?: string | null;
+        };
+        PackageOfferInput: {
+            name?: string;
+            description?: string;
+            /** @enum {string} */
+            kind?: "session_pack" | "monthly_coaching" | "online_coaching" | "semi_private";
+            credits?: number;
+            clear_credits?: boolean;
+            /** Format: int64 */
+            price_minor?: number;
+            price_includes_vat?: boolean;
+            validity_days?: number;
+            clear_validity?: boolean;
+            /** @enum {string} */
+            cycle?: "one_off" | "weekly" | "monthly" | "annual";
+            /** Format: uuid */
+            session_type_id?: string;
+            clear_session_type?: boolean;
+            sort_order?: number;
+        };
         Profile: {
             /** Format: uuid */
             user_id?: string;
@@ -4624,6 +5101,9 @@ export interface components {
             ends_at?: string;
             /** @enum {string} */
             status?: "scheduled" | "cancelled";
+            /** Format: uuid */
+            location_id?: string | null;
+            /** @description The place's name as it was at booking, or free text. */
             location?: string;
             notes?: string;
             attendees?: components["schemas"]["Attendee"][];

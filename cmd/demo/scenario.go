@@ -173,6 +173,38 @@ func runScenario(ctx context.Context, c *apiClient) (*Recording, error) {
 		return nil, fmt.Errorf("session type: %w", err)
 	}
 
+	// Two places and a price list.
+	places := map[string]string{}
+	// A slice, not a map: the order ids are minted in must not vary between
+	// recordings. The first place added is the primary.
+	for _, place := range []struct {
+		key  string
+		body map[string]any
+	}{
+		{"studio", map[string]any{"name": "Rivera Strength Studio", "kind": "studio", "region": "Dubai",
+			"address": "Marina Plaza, Dubai Marina", "colour": "#c8ff00"}},
+		{"beach", map[string]any{"name": "Kite Beach", "kind": "outdoor", "region": "Dubai",
+			"address": "Jumeirah 3", "colour": "#4f8cff"}},
+	} {
+		var created idOnly
+		if err := c.do(ctx, "POST", "/v1/locations", place.body, &created); err != nil {
+			return nil, fmt.Errorf("location %s: %w", place.key, err)
+		}
+		places[place.key] = created.ID
+	}
+	for _, offer := range []map[string]any{
+		{"name": fivePack.name, "kind": "session_pack", "credits": fivePack.credits, "price_minor": fivePack.priceMinor, "validity_days": 60, "sort_order": 1},
+		{"name": tenPack.name, "kind": "session_pack", "credits": tenPack.credits, "price_minor": tenPack.priceMinor, "validity_days": 90, "sort_order": 2},
+		{"name": twentyPack.name, "kind": "session_pack", "credits": twentyPack.credits, "price_minor": twentyPack.priceMinor, "validity_days": 150, "sort_order": 3},
+		{"name": "Semi-private × 8", "kind": "semi_private", "credits": 8, "price_minor": 160000, "validity_days": 60, "sort_order": 4},
+		{"name": "Online coaching", "kind": "online_coaching", "price_minor": 90000, "cycle": "monthly", "sort_order": 5,
+			"description": "Programme, weekly check-in and form reviews in the app."},
+	} {
+		if err := c.do(ctx, "POST", "/v1/package-offers", offer, nil); err != nil {
+			return nil, fmt.Errorf("offer %v: %w", offer["name"], err)
+		}
+	}
+
 	exercises, err := c.exercises(ctx)
 	if err != nil {
 		return nil, err
@@ -261,7 +293,7 @@ func runScenario(ctx context.Context, c *apiClient) (*Recording, error) {
 		}
 		if err := c.do(ctx, "POST", "/v1/sessions", map[string]any{
 			"session_type_id": typeID, "starts_at": o.startsAt.UTC(), "client_ids": []string{id},
-			"location": studioFor(o),
+			"location_id": places[placeFor(o)],
 		}, &booked); err != nil {
 			return nil, fmt.Errorf("book %s: %w", p.name, err)
 		}
@@ -307,14 +339,13 @@ func runScenario(ctx context.Context, c *apiClient) (*Recording, error) {
 	return c.record(ctx, session.Account)
 }
 
-func studioFor(o occurrence) string {
-	if o.semi {
-		return "Studio B"
-	}
+// placeFor is where a session happens: Saturday mornings at the beach,
+// everything else at the studio.
+func placeFor(o occurrence) string {
 	if o.startsAt.Weekday() == time.Saturday {
-		return "Kite Beach"
+		return "beach"
 	}
-	return "Studio A"
+	return "studio"
 }
 
 // outcome is how a past session went: nearly always delivered, with the
