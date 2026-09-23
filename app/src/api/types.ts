@@ -175,7 +175,16 @@ export interface Invoice {
   total_minor: number;
   balance_minor?: number;
   notes?: string;
-  payment_instructions_snapshot?: string;
+  /**
+   * Frozen at issue. The REST API sends it as an object under this name; the
+   * sync pull carries the raw column, `payment_instructions_snapshot`, which
+   * is a different thing and lives only in the local mirror.
+   */
+  payment_instructions?: {
+    methods?: unknown[];
+    reference?: string;
+    note?: string;
+  } | null;
   lines?: InvoiceLine[];
 }
 

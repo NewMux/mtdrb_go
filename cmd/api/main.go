@@ -9,19 +9,12 @@ import (
 	"syscall"
 
 	"github.com/NewMux/mtdrb_go/internal/api"
-	"github.com/NewMux/mtdrb_go/internal/auth"
-	"github.com/NewMux/mtdrb_go/internal/billing"
+	"github.com/NewMux/mtdrb_go/internal/app"
 	"github.com/NewMux/mtdrb_go/internal/config"
-	"github.com/NewMux/mtdrb_go/internal/crm"
-	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
-	"github.com/NewMux/mtdrb_go/internal/ledger"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
-	"github.com/NewMux/mtdrb_go/internal/programming"
-	"github.com/NewMux/mtdrb_go/internal/scheduling"
-	"github.com/NewMux/mtdrb_go/internal/sync"
 )
 
 func main() {
@@ -56,15 +49,6 @@ func run() error {
 	}
 	defer pool.Close()
 
-	wall := clock.System{}
-	issuer := auth.NewTokenIssuer(cfg.JWTSigningKey, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, wall)
-
-	// Signup provisions the tenant's chart of accounts in the same transaction
-	// that creates the tenant: a tenant that cannot post is not a usable one.
-	ledgerSvc := ledger.NewService(wall)
-	programmingSvc := programming.NewService(wall)
-	authSvc := auth.NewService(pool, issuer, ledgerSvc, programmingSvc, wall, auth.DefaultArgon2Params())
-
 	presigner, err := media.NewS3Presigner(media.S3Config{
 		Endpoint:  cfg.StorageEndpoint,
 		Region:    cfg.StorageRegion,
@@ -81,27 +65,18 @@ func run() error {
 		return err
 	}
 
-	crmSvc := crm.NewService(wall, cfg.ColumnEncryptionKey)
-	mediaSvc := media.NewService(presigner, wall, cfg.PresignTTL)
-	billingSvc := billing.NewService(ledgerSvc, wall)
-	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
-
-	srv := api.New(cfg, pool, log, api.Deps{
-		Auth:        auth.NewHandler(authSvc),
-		CRM:         crm.NewHandler(crmSvc, pool),
-		Media:       media.NewHandler(mediaSvc, pool),
-		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
-		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
-		Programming: programming.NewHandler(programmingSvc, pool),
-		Sync: sync.NewHandler(sync.NewService(wall), pool, sync.Dependencies{
-			CRM:         crmSvc,
-			Scheduling:  schedulingSvc,
-			Billing:     billingSvc,
-			Programming: programmingSvc,
-		}),
-		Dashboard:   dashboard.NewHandler(dashboard.NewService(billingSvc, ledgerSvc, wall), pool),
-		TokenIssuer: issuer,
+	services := app.New(app.Options{
+		Pool:            pool,
+		Clock:           clock.System{},
+		JWTSigningKey:   cfg.JWTSigningKey,
+		AccessTokenTTL:  cfg.AccessTokenTTL,
+		RefreshTokenTTL: cfg.RefreshTokenTTL,
+		ColumnKey:       cfg.ColumnEncryptionKey,
+		Presigner:       presigner,
+		PresignTTL:      cfg.PresignTTL,
+		PublicBaseURL:   cfg.PublicBaseURL,
 	})
+	srv := api.New(cfg, pool, log, services.Handlers())
 
 	return srv.Run(ctx)
 }

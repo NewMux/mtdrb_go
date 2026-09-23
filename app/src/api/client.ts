@@ -194,10 +194,15 @@ export class ApiClient {
 
   // -- Sync -----------------------------------------------------------------
 
-  pull(cursor: string, limit = 500): Promise<PullResult> {
+  /**
+   * `reset` names collections to restart from the beginning — for a device
+   * whose local schema gained columns its stored rows lack.
+   */
+  pull(cursor: string, limit = 500, reset: readonly string[] = []): Promise<PullResult> {
     const query = new URLSearchParams();
     if (cursor) query.set('cursor', cursor);
     query.set('limit', String(limit));
+    if (reset.length > 0) query.set('reset', reset.join(','));
     return this.request<PullResult>(`/v1/sync/pull?${query.toString()}`);
   }
 

@@ -16,16 +16,11 @@ import (
 	"time"
 
 	"github.com/NewMux/mtdrb_go/internal/api"
+	"github.com/NewMux/mtdrb_go/internal/app"
 	"github.com/NewMux/mtdrb_go/internal/auth"
-	"github.com/NewMux/mtdrb_go/internal/billing"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
-	"github.com/NewMux/mtdrb_go/internal/ledger"
-	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
-	"github.com/NewMux/mtdrb_go/internal/programming"
-	"github.com/NewMux/mtdrb_go/internal/scheduling"
-	"github.com/NewMux/mtdrb_go/internal/sync"
 	"github.com/NewMux/mtdrb_go/internal/testsupport"
 )
 
@@ -67,36 +62,25 @@ func newHarness(t *testing.T) *harness {
 		PresignTTL:      5 * time.Minute,
 	}
 
-	issuer := auth.NewTokenIssuer([]byte(strings.Repeat("k", 32)),
-		cfg.AccessTokenTTL, cfg.RefreshTokenTTL, wall)
-
 	params := auth.DefaultArgon2Params()
 	params.Memory, params.Iterations = 1024, 1
-
-	ledgerSvc := ledger.NewService(wall)
-	programmingSvc := programming.NewService(wall)
-	authSvc := auth.NewService(pool, issuer, ledgerSvc, programmingSvc, wall, params)
-	crmSvc := crm.NewService(wall, []byte(strings.Repeat("c", 32)))
-	mediaSvc := media.NewService(&fakePresigner{}, wall, cfg.PresignTTL)
-	billingSvc := billing.NewService(ledgerSvc, wall)
-	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
 	cfg.PublicBaseURL = "https://app.coachpulse.test"
 
-	srv := api.New(cfg, pool, slog.New(slog.DiscardHandler), api.Deps{
-		Auth:        auth.NewHandler(authSvc),
-		CRM:         crm.NewHandler(crmSvc, pool),
-		Media:       media.NewHandler(mediaSvc, pool),
-		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
-		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
-		Programming: programming.NewHandler(programmingSvc, pool),
-		Sync: sync.NewHandler(sync.NewService(wall), pool, sync.Dependencies{
-			CRM:         crmSvc,
-			Scheduling:  schedulingSvc,
-			Billing:     billingSvc,
-			Programming: programmingSvc,
-		}),
-		TokenIssuer: issuer,
+	// The same wiring the API binary uses, so a service added there is under
+	// test here without anyone remembering to add it twice.
+	services := app.New(app.Options{
+		Pool:            pool,
+		Clock:           wall,
+		JWTSigningKey:   []byte(strings.Repeat("k", 32)),
+		AccessTokenTTL:  cfg.AccessTokenTTL,
+		RefreshTokenTTL: cfg.RefreshTokenTTL,
+		Argon2:          params,
+		ColumnKey:       []byte(strings.Repeat("c", 32)),
+		Presigner:       &fakePresigner{},
+		PresignTTL:      cfg.PresignTTL,
+		PublicBaseURL:   cfg.PublicBaseURL,
 	})
+	srv := api.New(cfg, pool, slog.New(slog.DiscardHandler), services.Handlers())
 
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

@@ -37,6 +37,9 @@ tags:
       Offline support. Pull mirrors rows into local storage; push carries
       *operations*, not rows — see `PushOperation`.
   - name: Clients
+  - name: Media
+    description: Progress photos, receipts and signatures. Bytes move directly
+      between the device and private storage on presigned URLs.
   - name: Scheduling
   - name: Credits
   - name: Invoices
@@ -195,6 +198,14 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 500, maximum: 500 }
+        - name: reset
+          in: query
+          schema: { type: string, examples: ["clients,packages"] }
+          description: |
+            Comma-separated collections to restart from the beginning. A
+            device whose local schema gained columns sends this once: its
+            cursor is past rows it stored without the new fields, and the
+            cursor is opaque to it, so the server does the resetting.
       responses:
         "200":
           description: Changes
@@ -607,6 +618,63 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Invoice" }
+    patch:
+      tags: [Invoices]
+      summary: Replace a draft's lines and terms
+      description: Only a draft can change. An issued invoice is a tax document;
+        correcting one means voiding it or, once paid, recording a refund.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvoiceDraftInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [Invoices]
+      summary: Delete a draft
+      description: A draft took no number, so deleting it leaves no gap.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      responses:
+        "204": { description: Deleted }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/invoices/{invoiceID}/void:
+    parameters:
+      - { name: invoiceID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Invoices]
+      summary: Void an invoice
+      description: |
+        A draft simply goes; an issued invoice gets a reversing journal entry
+        and its package is voided with it. Refused with
+        `invalid_state_transition` once anything has been paid against it or
+        any of its credits trained off — clawing back delivered training would
+        corrupt both ledgers.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Voided
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /v1/invoices/{invoiceID}/issue:
     parameters:
@@ -835,6 +903,40 @@ paths:
                   exercises:
                     type: array
                     items: { $ref: "#/components/schemas/Exercise" }
+    post:
+      tags: [Programming]
+      summary: Add a custom exercise
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, category]
+              properties:
+                name: { type: string }
+                category: { $ref: "#/components/schemas/ExerciseCategory" }
+                primary_muscle: { type: string }
+                equipment: { type: string }
+                instructions: { type: string }
+                video_url: { type: string }
+                demo_media_id: { type: string, format: uuid, nullable: true }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Exercise" }
+
+  /v1/exercises/{exerciseID}:
+    parameters:
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Programming]
+      summary: Archive a custom exercise
+      description: Archived rather than deleted, because logged sets reference it.
+      responses:
+        "204": { description: Archived }
 
   /v1/programs:
     get:
@@ -1027,6 +1129,587 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PublicInvoice" }
         "404": { description: No such link }
+
+
+  # -------------------------------------------------------------------------
+  # Clients: tags, readiness, waivers
+  # -------------------------------------------------------------------------
+  /v1/clients/tags:
+    get:
+      tags: [Clients]
+      summary: The tenant's client tags
+      responses:
+        "200":
+          description: Tags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tags:
+                    type: array
+                    items: { $ref: "#/components/schemas/Tag" }
+    post:
+      tags: [Clients]
+      summary: Create a tag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                colour: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+
+  /v1/clients/tags/{tagID}:
+    parameters:
+      - { name: tagID, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Clients]
+      summary: Delete a tag, removing it from every client
+      responses:
+        "204": { description: Deleted }
+
+  /v1/clients/{clientID}/tags:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Clients]
+      summary: Replace a client's tags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_ids]
+              properties:
+                tag_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The client, with its new tags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Client" }
+
+  /v1/clients/{clientID}/parq:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Clients]
+      summary: The client's most recent PAR-Q
+      responses:
+        "200":
+          description: The latest questionnaire
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ParQResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Clients]
+      summary: Record a completed PAR-Q
+      description: |
+        Every one of the seven standard questions must be answered. Any "yes"
+        sets `requires_clearance`, and the client stays flagged until medical
+        clearance is recorded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers:
+                  type: array
+                  items: { $ref: "#/components/schemas/ParQAnswer" }
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ParQResponse" }
+
+  /v1/clients/{clientID}/waivers:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Clients]
+      summary: The waivers this client has signed
+      responses:
+        "200":
+          description: Signatures
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signatures:
+                    type: array
+                    items: { $ref: "#/components/schemas/WaiverSignature" }
+
+  /v1/clients/{clientID}/waivers/{waiverID}/sign:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: waiverID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Clients]
+      summary: Record a client's signature
+      description: The exact text signed is copied onto the signature, so a
+        later revision of the waiver cannot change what was agreed to.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signed_name]
+              properties:
+                signed_name: { type: string }
+                signature_media_id: { type: string, format: uuid, nullable: true }
+      responses:
+        "201":
+          description: Signed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WaiverSignature" }
+
+  /v1/waivers:
+    get:
+      tags: [Clients]
+      summary: Waiver documents
+      parameters:
+        - { name: active, in: query, schema: { type: boolean, default: true } }
+      responses:
+        "200":
+          description: Waivers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  waivers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Waiver" }
+    post:
+      tags: [Clients]
+      summary: Publish a waiver
+      description: A waiver with the same title becomes a new version; the old
+        one stays attached to the signatures made against it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              properties:
+                title: { type: string }
+                body: { type: string }
+      responses:
+        "201":
+          description: Published
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Waiver" }
+
+  # -------------------------------------------------------------------------
+  # Media
+  # -------------------------------------------------------------------------
+  /v1/media/uploads:
+    post:
+      tags: [Media]
+      summary: Ask for a presigned upload URL
+      description: |
+        The bytes go straight to storage, never through the API. Portal
+        clients may call this too; their uploads are always attached to
+        themselves, whatever `client_id` says.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, content_type, byte_size]
+              properties:
+                kind: { $ref: "#/components/schemas/MediaKind" }
+                content_type: { type: string, examples: [image/jpeg] }
+                byte_size: { type: integer, format: int64 }
+                client_id: { type: string, format: uuid, nullable: true }
+      responses:
+        "201":
+          description: Upload ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaUpload" }
+
+  /v1/media/{objectID}/confirm:
+    parameters:
+      - { name: objectID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Media]
+      summary: Confirm an upload landed
+      responses:
+        "200":
+          description: The confirmed object
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaObject" }
+
+  /v1/media/{objectID}/download:
+    parameters:
+      - { name: objectID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Media]
+      summary: A short-lived download URL
+      description: Minted only after the row is read under row-level security,
+        so authorisation happens before the URL exists.
+      responses:
+        "200":
+          description: Download
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaDownload" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/media/{objectID}:
+    parameters:
+      - { name: objectID, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Media]
+      summary: Delete an object and its bytes
+      responses:
+        "204": { description: Deleted }
+
+  /v1/media/clients/{clientID}:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Media]
+      summary: A client's media of one kind
+      parameters:
+        - { name: kind, in: query, schema: { $ref: "#/components/schemas/MediaKind" } }
+      responses:
+        "200":
+          description: Objects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  objects:
+                    type: array
+                    items: { $ref: "#/components/schemas/MediaObject" }
+
+  # -------------------------------------------------------------------------
+  # Scheduling
+  # -------------------------------------------------------------------------
+  /v1/sessions/recurring:
+    post:
+      tags: [Scheduling]
+      summary: Book a recurring series
+      description: |
+        Materialises one session per occurrence. Occurrences that clash with
+        an existing booking are skipped and reported rather than failing the
+        whole series: a three-month series will usually hit something.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_type_id, weekdays, starts_on, ends_on, time_of_day, timezone]
+              properties:
+                session_type_id: { type: string, format: uuid }
+                client_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                weekdays:
+                  type: array
+                  description: 0 is Sunday.
+                  items: { type: integer, minimum: 0, maximum: 6 }
+                starts_on: { type: string, format: date }
+                ends_on: { type: string, format: date }
+                time_of_day: { type: string, examples: ["07:30"] }
+                timezone: { type: string, examples: [Asia/Dubai] }
+                location: { type: string }
+      responses:
+        "201":
+          description: The series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecurResult" }
+
+  /v1/sessions/{sessionID}:
+    parameters:
+      - { name: sessionID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Scheduling]
+      summary: Fetch a session with its attendees
+      responses:
+        "200":
+          description: The session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session_" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Scheduling]
+      summary: Cancel a session
+      description: Frees the slot. Attendance already marked stands — a credit
+        correctly burned is not silently refunded.
+      responses:
+        "204": { description: Cancelled }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sessions/{sessionID}/reschedule:
+    parameters:
+      - { name: sessionID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Scheduling]
+      summary: Move a session
+      description: Re-checks the buffer at the new time; refused with
+        `scheduling_conflict` on a clash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starts_at]
+              properties:
+                starts_at: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Moved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session_" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/sessions/{sessionID}/attendees:
+    parameters:
+      - { name: sessionID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Scheduling]
+      summary: Add a client to a session
+      description: Refused when the session is at its type's capacity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id]
+              properties:
+                client_id: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Attendee" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/payment-methods/{methodID}:
+    parameters:
+      - { name: methodID, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Invoices]
+      summary: Archive a payment method
+      description: Invoices already issued keep the instructions they printed.
+      responses:
+        "204": { description: Archived }
+
+  # -------------------------------------------------------------------------
+  # Programming
+  # -------------------------------------------------------------------------
+  /v1/programs/{programID}/duplicate:
+    parameters:
+      - { name: programID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Copy a programme, structure and all
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+      responses:
+        "201":
+          description: The copy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Program" }
+
+  /v1/programs/{programID}/blocks:
+    parameters:
+      - { name: programID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Add a block
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, weeks]
+              properties:
+                name: { type: string }
+                weeks: { type: integer, minimum: 1 }
+                notes: { type: string }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgramBlock" }
+
+  /v1/programs/blocks/{blockID}/days:
+    parameters:
+      - { name: blockID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Add a training day to a block
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                notes: { type: string }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgramDay" }
+
+  /v1/programs/days/{dayID}/exercises:
+    parameters:
+      - { name: dayID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Prescribe an exercise on a day
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [exercise_id, target_sets]
+              properties:
+                exercise_id: { type: string, format: uuid }
+                target_sets: { type: integer, minimum: 1 }
+                target_reps_min: { type: integer, nullable: true }
+                target_reps_max: { type: integer, nullable: true }
+                target_load_grams: { type: integer, nullable: true }
+                target_rpe_tenths: { type: integer, nullable: true }
+                target_rir: { type: integer, nullable: true }
+                rest_seconds: { type: integer, nullable: true }
+                tempo: { type: string }
+                superset_group: { type: string }
+                notes: { type: string }
+      responses:
+        "201":
+          description: Prescribed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Prescription" }
+
+  /v1/programs/{programID}/assign:
+    parameters:
+      - { name: programID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Programming]
+      summary: Put a client on a programme
+      description: Any programme the client was following is completed first —
+        a client follows one plan at a time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id]
+              properties:
+                client_id: { type: string, format: uuid }
+                starts_on: { type: string, format: date, nullable: true }
+                ends_on: { type: string, format: date, nullable: true }
+                notes: { type: string }
+      responses:
+        "201":
+          description: Assigned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgramAssignment" }
+
+  /v1/workouts/{workoutID}:
+    parameters:
+      - { name: workoutID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Programming]
+      summary: Fetch a workout with its sets
+      responses:
+        "200":
+          description: The workout
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workout" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/workouts/clients/{clientID}/history:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Programming]
+      summary: A client's workouts, newest first
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+      responses:
+        "200":
+          description: Workouts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workouts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Workout" }
+
+  /v1/workouts/clients/{clientID}/exercises/{exerciseID}/previous:
+    parameters:
+      - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Programming]
+      summary: What the client did last time on this exercise
+      description: Working sets only, so a warm-up is never offered as the
+        number to beat.
+      responses:
+        "200":
+          description: The previous performance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviousPerformance" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
 components:
   securitySchemes:
@@ -1425,8 +2108,30 @@ components:
         lines:
           type: array
           items: { $ref: "#/components/schemas/InvoiceLine" }
+        payment_instructions:
+          $ref: "#/components/schemas/PaymentInstructions"
+          description: |
+            Frozen at issue. An invoice keeps the IBAN it was sent with even if
+            the trainer later changes banks.
+        journal_entry_id: { type: string, format: uuid, nullable: true }
+        issued_at: { type: string, format: date-time, nullable: true }
+        settled_at: { type: string, format: date-time, nullable: true }
+        voided_at: { type: string, format: date-time, nullable: true }
+        void_reason: { type: string }
         has_share_link: { type: boolean }
         server_seq: { type: integer, format: int64 }
+
+    PaymentInstructions:
+      type: object
+      nullable: true
+      properties:
+        methods:
+          type: array
+          items: { $ref: "#/components/schemas/PaymentMethod" }
+        reference:
+          type: string
+          description: What the client should write on the transfer — the invoice number.
+        note: { type: string }
 
     InvoiceLine:
       type: object
@@ -1444,6 +2149,8 @@ components:
         unit_price_minor: { type: integer, format: int64 }
         amount_minor: { type: integer, format: int64 }
         package_credits: { type: integer, nullable: true }
+        credits_expire_on: { type: string, format: date, nullable: true }
+        sort_order: { type: integer }
 
     InvoiceDraftInput:
       type: object
@@ -1750,3 +2457,146 @@ components:
             watch for progression.
         top_set_grams: { type: integer, nullable: true }
         working_sets: { type: integer }
+
+    ParQQuestion:
+      type: string
+      enum: [heart_condition, chest_pain_activity, chest_pain_rest, loses_balance_dizziness,
+             bone_or_joint_problem, blood_pressure_medication, other_reason]
+
+    ParQAnswer:
+      type: object
+      required: [question, "yes"]
+      properties:
+        question: { $ref: "#/components/schemas/ParQQuestion" }
+        "yes": { type: boolean }
+        detail: { type: string }
+
+    ParQResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        answers:
+          type: array
+          items: { $ref: "#/components/schemas/ParQAnswer" }
+        requires_clearance: { type: boolean }
+        cleared_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time }
+
+    Waiver:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        body: { type: string }
+        version: { type: integer }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    WaiverSignature:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        waiver_id: { type: string, format: uuid }
+        client_id: { type: string, format: uuid }
+        signed_name: { type: string }
+        signed_at: { type: string, format: date-time }
+        signature_media_id: { type: string, format: uuid, nullable: true }
+
+    MediaKind:
+      type: string
+      enum: [progress_photo, receipt, signature, form_check_video, exercise_demo, other]
+
+    MediaObject:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/MediaKind" }
+        sensitivity:
+          type: string
+          enum: [standard, sensitive]
+          description: Sensitive bytes must never be cached or persisted by a client.
+        content_type: { type: string }
+        byte_size: { type: integer, format: int64 }
+        client_id: { type: string, format: uuid, nullable: true }
+        confirmed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    MediaUpload:
+      type: object
+      properties:
+        object: { $ref: "#/components/schemas/MediaObject" }
+        upload_url: { type: string }
+        expires_at: { type: string, format: date-time }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: Send these verbatim, or the signature will not match.
+
+    MediaDownload:
+      type: object
+      properties:
+        url: { type: string }
+        expires_at: { type: string, format: date-time }
+        sensitive: { type: boolean }
+
+    RecurResult:
+      type: object
+      properties:
+        series_id: { type: string, format: uuid }
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/Session_" }
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              starts_at: { type: string, format: date-time }
+              reason: { type: string }
+
+    ProgramBlock:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        weeks: { type: integer }
+        sort_order: { type: integer }
+        notes: { type: string }
+        days:
+          type: array
+          items: { $ref: "#/components/schemas/ProgramDay" }
+
+    ProgramDay:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        sort_order: { type: integer }
+        notes: { type: string }
+        prescriptions:
+          type: array
+          items: { $ref: "#/components/schemas/Prescription" }
+
+    ProgramAssignment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        program_id: { type: string, format: uuid }
+        program_name: { type: string }
+        client_id: { type: string, format: uuid }
+        starts_on: { type: string, format: date }
+        ends_on: { type: string, format: date, nullable: true }
+        status: { type: string }
+        notes: { type: string }
+        server_seq: { type: integer, format: int64 }
+
+    PreviousPerformance:
+      type: object
+      properties:
+        exercise_id: { type: string, format: uuid }
+        workout_id: { type: string, format: uuid }
+        performed_on: { type: string, format: date }
+        sets:
+          type: array
+          items: { $ref: "#/components/schemas/SetLog" }

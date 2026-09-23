@@ -17,7 +17,7 @@
  */
 
 import type { Database, Row } from '@/db/types';
-import { MIGRATIONS } from '@/db/schema';
+import { migrate } from '@/db/migrate';
 
 /** The slice of sql.js this needs, rather than pulling in its whole surface. */
 interface SqlJsStatement {
@@ -83,6 +83,7 @@ export async function openInPageDatabase(): Promise<Database> {
 
   const SQL = await initSqlJs();
   const db = new SQL.Database();
-  for (const statement of MIGRATIONS) db.run(statement);
-  return new InPageDatabase(db);
+  const wrapped = new InPageDatabase(db);
+  await migrate(wrapped);
+  return wrapped;
 }

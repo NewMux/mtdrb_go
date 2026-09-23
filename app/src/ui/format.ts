@@ -7,13 +7,42 @@
  * arithmetic inline.
  */
 
-/** Renders minor units, e.g. 50000 EUR as "500.00 EUR". */
+/**
+ * ISO-4217 currencies whose minor unit is not a hundredth.
+ *
+ * Most of the Gulf counts in hundredths, but Kuwait, Bahrain and Oman count in
+ * fils — thousandths — so a dinar rendered with two places would be off by a
+ * factor of ten. Mirrors the table in internal/platform/money, and both are
+ * held to the same vectors file.
+ */
+const EXPONENTS: Record<string, number> = {
+  BHD: 3, IQD: 3, JOD: 3, KWD: 3, LYD: 3, OMR: 3, TND: 3,
+  BIF: 0, CLP: 0, DJF: 0, GNF: 0, ISK: 0, JPY: 0, KMF: 0, KRW: 0, PYG: 0,
+  RWF: 0, UGX: 0, VND: 0, VUV: 0, XAF: 0, XOF: 0, XPF: 0,
+};
+
+/** Decimal places in the currency's minor unit. */
+export function currencyExponent(currency: string): number {
+  return EXPONENTS[currency.trim().toUpperCase()] ?? 2;
+}
+
+/** Minor units as an editable amount with no currency code: "500.00", "12.500". */
+export function amountText(minor: number, currency: string): string {
+  const rendered = money(minor, currency);
+  return rendered.slice(0, rendered.lastIndexOf(' '));
+}
+
+/** Renders minor units in the currency's own precision: "500.00 AED", "12.500 KWD". */
 export function money(minor: number, currency: string): string {
+  const code = currency.trim().toUpperCase();
+  const exponent = currencyExponent(code);
   const negative = minor < 0;
   const abs = Math.abs(minor);
-  const whole = Math.floor(abs / 100);
-  const cents = abs % 100;
-  return `${negative ? '-' : ''}${whole}.${String(cents).padStart(2, '0')} ${currency}`;
+  if (exponent === 0) return `${negative ? '-' : ''}${abs} ${code}`;
+  const scale = 10 ** exponent;
+  const whole = Math.floor(abs / scale);
+  const fraction = abs % scale;
+  return `${negative ? '-' : ''}${whole}.${String(fraction).padStart(exponent, '0')} ${code}`;
 }
 
 /**
@@ -112,10 +141,19 @@ export function parseReps(text: string): number | null {
 }
 
 /** "120.50" becomes 12050 minor units. */
-export function parseMoney(text: string): number | null {
-  const value = parseNumber(text);
-  if (value === null) return null;
-  return Math.round(value * 100);
+export function parseMoney(text: string, currency = 'EUR'): number | null {
+  // Parsed as digits rather than through a float, so "0.29" is 29 and never
+  // 28.999… rounded, and so a fraction finer than the currency allows is
+  // refused rather than silently rounded away.
+  const trimmed = text.trim().replace(',', '.');
+  if (!/^-?\d*\.?\d+$/.test(trimmed)) return null;
+  const negative = trimmed.startsWith('-');
+  const [whole = '', fraction = ''] = trimmed.replace('-', '').split('.');
+  const exponent = currencyExponent(currency);
+  if (fraction.length > exponent) return null;
+  const minor = Number((whole || '0') + fraction.padEnd(exponent, '0'));
+  if (!Number.isSafeInteger(minor)) return null;
+  return negative ? -minor : minor;
 }
 
 /** "82.4" kg becomes 82400 grams. */

@@ -3,6 +3,7 @@ package sync
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -63,6 +64,12 @@ func (h *Handler) pull(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
+	// A device whose local schema gained columns asks for those collections
+	// again from the start: its cursor is past rows it stored without the new
+	// fields. The cursor stays opaque to the device, so the reset happens here
+	// rather than by the device editing a token it cannot read.
+	cursor.Reset(strings.Split(q.Get("reset"), ","))
+
 	limit := 0
 	if raw := q.Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {

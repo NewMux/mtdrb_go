@@ -34,13 +34,17 @@ export const SYNC_TABLES = [
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 /**
- * Local DDL.
+ * The schema every device started with — version 1.
+ *
+ * Frozen. A device that already has these tables will never run a changed
+ * CREATE TABLE IF NOT EXISTS, so editing a statement here would silently fork
+ * old devices from new ones. Changes go in UPGRADES instead.
  *
  * Deliberately loose about types: SQLite is dynamically typed anyway, and a
  * local schema that rejects a row the server considers valid would strand a
  * device. Money and loads stay integers, as they are everywhere else.
  */
-export const MIGRATIONS: string[] = [
+export const BASE_SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS clients (
      id TEXT PRIMARY KEY NOT NULL,
      full_name TEXT NOT NULL,
@@ -190,3 +194,24 @@ export const MIGRATIONS: string[] = [
      value TEXT NOT NULL
    )`,
 ];
+
+/**
+ * One step forward from the frozen base.
+ *
+ * `resync` names the collections whose rows are already on the device without
+ * the columns this step adds. Pull drops columns a device does not know, and
+ * the device's cursor is already past those rows, so without a resync the new
+ * fields would reach a device only when each row next changed — possibly
+ * never. The server restarts just those collections on the next pull.
+ */
+export interface SchemaUpgrade {
+  version: number;
+  statements: string[];
+  resync?: SyncTable[];
+}
+
+/** Every step after version 1, in order. Append only. */
+export const UPGRADES: SchemaUpgrade[] = [];
+
+/** The version a device is at once every upgrade has run. */
+export const SCHEMA_VERSION = UPGRADES.reduce((v, u) => Math.max(v, u.version), 1);

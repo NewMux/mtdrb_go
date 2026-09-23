@@ -8,7 +8,7 @@
 
 import { Platform } from 'react-native';
 import * as SQLite from 'expo-sqlite';
-import { MIGRATIONS } from './schema';
+import { migrate } from './migrate';
 import type { Database, Row } from './types';
 
 export type { Database, Row } from './types';
@@ -72,11 +72,9 @@ export async function openDatabase(): Promise<Database> {
   await db.execAsync('PRAGMA journal_mode = WAL');
   await db.execAsync('PRAGMA foreign_keys = OFF');
 
-  for (const statement of MIGRATIONS) {
-    await db.execAsync(statement);
-  }
-
-  instance = new SQLiteDatabase(db);
+  const wrapped = new SQLiteDatabase(db);
+  await migrate(wrapped);
+  instance = wrapped;
   return instance;
 }
 

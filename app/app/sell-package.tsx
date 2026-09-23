@@ -39,7 +39,7 @@ export default function SellPackageScreen() {
   const [issued, setIssued] = useState<{ invoice: Invoice; share: ShareLink | null } | null>(null);
 
   const creditCount = parseReps(credits);
-  const unitPrice = parseMoney(price);
+  const unitPrice = parseMoney(price, currency);
   const total = creditCount !== null && unitPrice !== null ? creditCount * unitPrice : null;
 
   const issue = async () => {

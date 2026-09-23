@@ -25,7 +25,7 @@ import {
   Row, Screen, SegmentedChoice, Spacer, Title,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
-import { dueLabel, money, parseMoney } from '@/ui/format';
+import { amountText, dueLabel, money, parseMoney } from '@/ui/format';
 import { colors, space } from '@/ui/theme';
 
 const INSTRUMENTS: readonly { value: PaymentInstrument; label: string }[] = [
@@ -69,13 +69,13 @@ export default function MoneyScreen() {
     // Prefilled with the balance, because that is what a client almost always
     // pays — and typing it again is a chance to mistype it.
     const balance = invoice.totalMinor - invoice.paidMinor;
-    setAmount((balance / 100).toFixed(2));
+    setAmount(amountText(balance, invoice.currency || fallbackCurrency));
     setReference('');
   };
 
   const record = async (invoice: InvoiceSummary) => {
     if (!db) return;
-    const minor = parseMoney(amount);
+    const minor = parseMoney(amount, invoice.currency || fallbackCurrency);
     if (minor === null || minor <= 0) return;
 
     await recordPayment(db, invoice.id, minor, instrument, {
@@ -195,7 +195,7 @@ export default function MoneyScreen() {
                       label="Record payment"
                       tone="primary"
                       onPress={() => { void record(invoice); }}
-                      disabled={(parseMoney(amount) ?? 0) <= 0}
+                      disabled={(parseMoney(amount, currency) ?? 0) <= 0}
                     />
                   </>
                 ) : null}

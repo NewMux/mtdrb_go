@@ -1,6 +1,12 @@
 # Binaries
 /bin/
 *.exe
+# `go build ./cmd/migrate` from the root drops these here.
+/api
+/migrate
+/worker
+/admin
+/demo
 
 # Test and coverage output
 *.out

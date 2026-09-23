@@ -8,13 +8,22 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import type { Database, Row } from '@/db/types';
-import { MIGRATIONS } from '@/db/schema';
+import { BASE_SCHEMA, SCHEMA_VERSION, UPGRADES } from '@/db/schema';
 
 export class MemoryDatabase implements Database {
   private readonly db = new DatabaseSync(':memory:');
 
-  constructor() {
-    for (const statement of MIGRATIONS) this.db.exec(statement);
+  /**
+   * At the current schema by default. `{ baseOnly: true }` builds a device as
+   * it was before any upgrade, for testing the upgrade path itself.
+   */
+  constructor(options: { baseOnly?: boolean } = {}) {
+    for (const statement of BASE_SCHEMA) this.db.exec(statement);
+    if (options.baseOnly) return;
+    for (const upgrade of UPGRADES) {
+      for (const statement of upgrade.statements) this.db.exec(statement);
+    }
+    this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
   async execute(sql: string, params: unknown[] = []): Promise<void> {

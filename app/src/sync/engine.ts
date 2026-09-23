@@ -12,6 +12,7 @@
 import type { Database } from '@/db/types';
 import { getMeta, setMeta } from '@/db/types';
 import { SYNC_TABLES, type SyncTable } from '@/db/schema';
+import { clearResync, pendingResync } from '@/db/migrate';
 import { ApiClient, NetworkError } from '@/api/client';
 import type { PushOperation } from '@/api/types';
 import * as outbox from './outbox';
@@ -98,9 +99,17 @@ export async function pull(db: Database, api: ApiClient): Promise<number> {
   const columnCache = new Map<string, Set<string>>();
   let pulled = 0;
   let cursor = (await getMeta(db, CURSOR_KEY)) ?? '';
+  // Collections a schema upgrade needs again from the start. Sent on the first
+  // page only, and cleared once the server has answered it, so an upgrade
+  // that lands while offline is still honoured on the next connection.
+  let reset = await pendingResync(db);
 
   for (let page = 0; page < 100; page++) {
-    const result = await api.pull(cursor);
+    const result = await api.pull(cursor, 500, reset);
+    if (reset.length > 0) {
+      await clearResync(db);
+      reset = [];
+    }
 
     for (const change of result.changes) {
       if (!syncTableSet.has(change.collection)) {

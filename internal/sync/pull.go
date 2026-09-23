@@ -101,11 +101,16 @@ var collections = []collection{
 		is_warmup, completed, notes, form_check_media_id, created_at, updated_at`},
 }
 
-// session_types, program_blocks, program_days and program_exercises carry no
-// server_seq of their own. The first is small enough to send whole; the
-// programme structure is fetched as an aggregate when its programme row
-// changes, because a block edited in isolation is not a thing a trainer does.
-var wholeTableCollections = map[string]bool{"session_types": true}
+// program_blocks, program_days and program_exercises carry no server_seq of
+// their own: the programme structure is fetched as an aggregate when its
+// programme row changes, because a block edited in isolation is not a thing a
+// trainer does.
+//
+// Session types used to be sent whole on a first sync only, which meant a type
+// created afterwards never reached the device. They are sequenced like
+// everything else now. A device still holding the old "delivered" marker of 1
+// in its cursor receives every type on its next pull, since every real
+// sequence number is higher — so it heals without a client change.
 
 // Cursor tracks progress per collection.
 //
@@ -158,6 +163,18 @@ func DecodeCursor(token string) (Cursor, error) {
 		}
 	}
 	return c, nil
+}
+
+// Reset restarts the named collections from the beginning. Unknown names and
+// blanks are ignored: a device naming a collection this server has never heard
+// of should still sync the rest.
+func (c Cursor) Reset(collectionNames []string) {
+	for _, name := range collectionNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			delete(c, name)
+		}
+	}
 }
 
 // Changes is one collection's slice of a pull.
@@ -229,24 +246,11 @@ func (s *Service) Pull(ctx context.Context, tx pgx.Tx, cursor Cursor, limit int)
 		}
 		since := cursor[c.Name]
 
-		var query string
-		var args []any
-		if wholeTableCollections[c.Name] {
-			// Sent in full on a first sync only; these tables are small and
-			// change rarely, and giving them a sequence is not worth a
-			// migration.
-			if since > 0 {
-				continue
-			}
-			query = `SELECT to_jsonb(r) FROM (SELECT ` + c.Columns + ` FROM ` + c.Table + `) r`
-		} else {
-			query = `SELECT to_jsonb(r), r.server_seq
-			           FROM (SELECT ` + c.Columns + `, server_seq FROM ` + c.Table + `
-			                  WHERE server_seq > $1 ORDER BY server_seq LIMIT $2) r`
-			args = []any{since, remaining}
-		}
+		query := `SELECT to_jsonb(r), r.server_seq
+		            FROM (SELECT ` + c.Columns + `, server_seq FROM ` + c.Table + `
+		                   WHERE server_seq > $1 ORDER BY server_seq LIMIT $2) r`
 
-		rows, err := tx.Query(ctx, query, args...)
+		rows, err := tx.Query(ctx, query, since, remaining)
 		if err != nil {
 			return PullResult{}, errs.Internal(err, "pull %s", c.Name)
 		}
@@ -255,21 +259,13 @@ func (s *Service) Pull(ctx context.Context, tx pgx.Tx, cursor Cursor, limit int)
 		highest := since
 		for rows.Next() {
 			var raw []byte
-			if wholeTableCollections[c.Name] {
-				if err := rows.Scan(&raw); err != nil {
-					rows.Close()
-					return PullResult{}, errs.Internal(err, "scan %s", c.Name)
-				}
-				highest = 1 // marks it as delivered; it is sent once
-			} else {
-				var seq int64
-				if err := rows.Scan(&raw, &seq); err != nil {
-					rows.Close()
-					return PullResult{}, errs.Internal(err, "scan %s", c.Name)
-				}
-				if seq > highest {
-					highest = seq
-				}
+			var seq int64
+			if err := rows.Scan(&raw, &seq); err != nil {
+				rows.Close()
+				return PullResult{}, errs.Internal(err, "scan %s", c.Name)
+			}
+			if seq > highest {
+				highest = seq
 			}
 			changes.Rows = append(changes.Rows, json.RawMessage(raw))
 		}

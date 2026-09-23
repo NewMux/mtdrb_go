@@ -188,6 +188,69 @@ func TestPullReturnsChangesAndAdvancesTheCursor(t *testing.T) {
 	}
 }
 
+// Session types used to be sent whole on a first sync only, so a type created
+// afterwards never reached the device and every booking against it rendered
+// without a name. A device still holding the old "delivered" marker must heal
+// on its next pull.
+func TestSessionTypesCreatedAfterFirstSyncReachTheDevice(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+
+	pull := func(cursor sync.Cursor) sync.PullResult {
+		t.Helper()
+		var result sync.PullResult
+		if err := f.tx(t, func(tx pgx.Tx) error {
+			var err error
+			result, err = f.sync.Pull(ctx, tx, cursor, 0)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	typesIn := func(result sync.PullResult) int {
+		for _, c := range result.Changes {
+			if c.Collection == "session_types" {
+				return len(c.Rows)
+			}
+		}
+		return 0
+	}
+	createType := func(name string) {
+		t.Helper()
+		if err := f.tx(t, func(tx pgx.Tx) error {
+			_, err := f.deps.Scheduling.CreateSessionType(ctx, tx, f.tenantID,
+				scheduling.CreateSessionTypeInput{Name: name, DurationMinutes: 60, Capacity: 1, CreditCost: 1})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	createType("1-on-1")
+	first := pull(nil)
+	if got := typesIn(first); got != 1 {
+		t.Fatalf("first sync carried %d session types, want 1", got)
+	}
+
+	createType("Semi-private")
+	cursor, err := sync.DecodeCursor(first.Cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := typesIn(pull(cursor)); got != 1 {
+		t.Errorf("a session type created after the first sync arrived %d times, want once", got)
+	}
+
+	// The cursor an older server handed out marked session types as
+	// delivered with a 1. Every real sequence number is higher, so that
+	// device receives the whole set rather than never seeing a new type.
+	cursor["session_types"] = 1
+	if got := typesIn(pull(cursor)); got != 2 {
+		t.Errorf("a device holding the old marker received %d session types, want 2", got)
+	}
+}
+
 // Encrypted notes and share-token secrets must never reach a device.
 func TestPullOmitsSensitiveColumns(t *testing.T) {
 	f := setup(t)

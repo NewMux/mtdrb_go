@@ -1,7 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import {
   money, load, rpe, bodyFat, rest, repRange, dueLabel,
-  parseLoad, parseMoney, parseRpe, parseReps, parseBodyFat,
+  parseLoad, parseMoney, parseRpe, parseReps, parseBodyFat, currencyExponent,
 } from '@/ui/format';
+
+/** The vectors the Go formatter is held to, so a receipt and the app agree. */
+const vectors = JSON.parse(
+  readFileSync(join(__dirname, '../../../internal/platform/money/testdata/format_vectors.json'), 'utf8'),
+) as { format: { minor: number; currency: string; want: string }[] };
 
 describe('formatting', () => {
   it('renders money from minor units without floating point', () => {
@@ -10,6 +18,25 @@ describe('formatting', () => {
     expect(money(0, 'GBP')).toBe('0.00 GBP');
     // An overdrawn balance is shown as owed, not hidden.
     expect(money(-2500, 'EUR')).toBe('-25.00 EUR');
+  });
+
+  it('renders every currency in its own precision, as the server does', () => {
+    expect(vectors.format.length).toBeGreaterThan(0);
+    for (const v of vectors.format) {
+      expect(money(v.minor, v.currency)).toBe(v.want);
+    }
+    expect(currencyExponent('KWD')).toBe(3);
+    expect(currencyExponent('aed')).toBe(2);
+  });
+
+  it('parses money exactly, in the currency\'s precision', () => {
+    expect(parseMoney('0.29', 'AED')).toBe(29);
+    expect(parseMoney('12.5', 'KWD')).toBe(12_500);
+    expect(parseMoney('12.505', 'KWD')).toBe(12_505);
+    // A fraction finer than the currency has is a typo, not something to round.
+    expect(parseMoney('12.505', 'AED')).toBeNull();
+    expect(parseMoney('3000', 'JPY')).toBe(3000);
+    expect(parseMoney('-25', 'EUR')).toBe(-2500);
   });
 
   it('converts loads only at the edge', () => {

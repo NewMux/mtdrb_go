@@ -46,22 +46,32 @@ const (
 
 // Package is a prepaid block of sessions.
 type Package struct {
-	ID               ids.ID        `json:"id"`
-	ClientID         ids.ID        `json:"client_id"`
-	InvoiceID        *ids.ID       `json:"invoice_id,omitempty"`
-	Name             string        `json:"name"`
-	CreditsTotal     int           `json:"credits_total"`
-	CreditsRemaining int           `json:"credits_remaining"`
-	UnitPriceMinor   int64         `json:"unit_price_minor"`
-	Currency         string        `json:"currency"`
-	PurchasedOn      time.Time     `json:"purchased_on"`
-	ExpiresAt        *time.Time    `json:"expires_at,omitempty"`
-	Status           PackageStatus `json:"status"`
-	ServerSeq        int64         `json:"server_seq"`
+	ID               ids.ID  `json:"id"`
+	ClientID         ids.ID  `json:"client_id"`
+	InvoiceID        *ids.ID `json:"invoice_id,omitempty"`
+	Name             string  `json:"name"`
+	CreditsTotal     int     `json:"credits_total"`
+	CreditsRemaining int     `json:"credits_remaining"`
+	UnitPriceMinor   int64   `json:"unit_price_minor"`
+	// ValueMinor is the whole pack's worth. It can exceed UnitPriceMinor *
+	// CreditsTotal by less than one minor unit per credit — the remainder of
+	// a price that does not divide evenly — and the credit that empties the
+	// pack recognises that remainder.
+	ValueMinor  int64         `json:"value_minor"`
+	Currency    string        `json:"currency"`
+	PurchasedOn time.Time     `json:"purchased_on"`
+	ExpiresAt   *time.Time    `json:"expires_at,omitempty"`
+	Status      PackageStatus `json:"status"`
+	ServerSeq   int64         `json:"server_seq"`
 }
 
 // UnitPrice is the revenue recognised per credit burned from this pack.
 func (p Package) UnitPrice() money.Money { return money.New(p.UnitPriceMinor, p.Currency) }
+
+// remainderMinor is what the emptying credit recognises on top of its price.
+func remainderMinor(value, unitPrice int64, credits int) int64 {
+	return value - unitPrice*int64(credits)
+}
 
 // Service manages packs and the credit ledger.
 type Service struct {
@@ -79,11 +89,15 @@ func NewService(l *ledger.Service, c clock.Clock) *Service {
 
 // GrantInput describes a pack to create.
 type GrantInput struct {
-	ClientID    ids.ID
-	InvoiceID   *ids.ID
-	Name        string
-	Credits     int
-	UnitPrice   money.Money
+	ClientID  ids.ID
+	InvoiceID *ids.ID
+	Name      string
+	Credits   int
+	UnitPrice money.Money
+	// Value, when set, is the pack's total worth and UnitPrice is derived
+	// from it. Invoices set it, because a line's amount rarely divides by its
+	// credits and the difference must still be recognised eventually.
+	Value       *money.Money
 	PurchasedOn time.Time
 	ExpiresAt   *time.Time
 }
@@ -108,6 +122,13 @@ func (s *Service) Grant(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Gran
 		return Package{}, errs.Invalid(errs.CodeValidation, "a package needs at least one credit").
 			WithField("credits", "must be greater than zero")
 	}
+	if in.Value != nil {
+		if in.Value.IsNegative() {
+			return Package{}, errs.Invalid(errs.CodeValidation, "a package cannot be worth less than nothing").
+				WithField("value_minor", "must not be negative")
+		}
+		in.UnitPrice = money.New(in.Value.Minor/int64(in.Credits), in.Value.Currency)
+	}
 	if in.UnitPrice.IsNegative() {
 		return Package{}, errs.Invalid(errs.CodeValidation, "a credit price cannot be negative").
 			WithField("unit_price_minor", "must not be negative")
@@ -129,21 +150,26 @@ func (s *Service) Grant(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Gran
 		in.ExpiresAt = &expires
 	}
 
+	value := in.UnitPrice.Mul(int64(in.Credits))
+	if in.Value != nil {
+		value = *in.Value
+	}
+
 	pkg := Package{
 		ID: ids.New(), ClientID: in.ClientID, InvoiceID: in.InvoiceID, Name: in.Name,
 		CreditsTotal: in.Credits, CreditsRemaining: in.Credits,
-		UnitPriceMinor: in.UnitPrice.Minor, Currency: in.UnitPrice.Currency,
+		UnitPriceMinor: in.UnitPrice.Minor, ValueMinor: value.Minor, Currency: in.UnitPrice.Currency,
 		PurchasedOn: purchasedOn, ExpiresAt: in.ExpiresAt, Status: PackageActive,
 	}
 
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO packages
 			(id, tenant_id, client_id, invoice_id, name, credits_total, credits_remaining,
-			 unit_price_minor, currency, purchased_on, expires_at, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, 'active')
+			 unit_price_minor, value_minor, currency, purchased_on, expires_at, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, 'active')
 		RETURNING server_seq`,
 		pkg.ID, tenantID, in.ClientID, in.InvoiceID, in.Name, in.Credits,
-		in.UnitPrice.Minor, in.UnitPrice.Currency, purchasedOn, in.ExpiresAt,
+		in.UnitPrice.Minor, value.Minor, in.UnitPrice.Currency, purchasedOn, in.ExpiresAt,
 	).Scan(&pkg.ServerSeq); err != nil {
 		if db.IsForeignKeyViolation(err) {
 			return Package{}, errs.NotFound("client")
@@ -152,8 +178,7 @@ func (s *Service) Grant(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Gran
 	}
 
 	var openingEntry *ids.ID
-	if in.InvoiceID == nil && !in.UnitPrice.IsZero() {
-		value := in.UnitPrice.Mul(int64(in.Credits))
+	if in.InvoiceID == nil && !value.IsZero() {
 		posted, err := s.ledger.Post(ctx, tx, ledger.Entry{
 			Date:       purchasedOn,
 			Memo:       "package granted outside an invoice",
@@ -185,10 +210,15 @@ type Consumption struct {
 	PackageID ids.ID
 	Credits   int
 	UnitPrice money.Money
+	// RemainderMinor is non-zero only when this consumption empties the pack:
+	// it is the part of the pack's value its unit price could not carry.
+	RemainderMinor int64
 }
 
 // Total is the revenue recognised for this consumption.
-func (c Consumption) Total() money.Money { return c.UnitPrice.Mul(int64(c.Credits)) }
+func (c Consumption) Total() money.Money {
+	return money.New(c.UnitPrice.Minor*int64(c.Credits)+c.RemainderMinor, c.UnitPrice.Currency)
+}
 
 // Balance summarises a client's credit position.
 type Balance struct {
@@ -212,7 +242,7 @@ func (s *Service) BalanceFor(ctx context.Context, tx pgx.Tx, clientID ids.ID) (B
 
 	rows, err := tx.Query(ctx, `
 		SELECT id, client_id, invoice_id, name, credits_total, credits_remaining,
-		       unit_price_minor, currency, purchased_on, expires_at, status::text, server_seq
+		       unit_price_minor, value_minor, currency, purchased_on, expires_at, status::text, server_seq
 		  FROM packages
 		 WHERE client_id = $1 AND status IN ('active', 'exhausted')
 		   AND credits_remaining <> 0
@@ -228,7 +258,7 @@ func (s *Service) BalanceFor(ctx context.Context, tx pgx.Tx, clientID ids.ID) (B
 		var p Package
 		var status string
 		if err := rows.Scan(&p.ID, &p.ClientID, &p.InvoiceID, &p.Name, &p.CreditsTotal,
-			&p.CreditsRemaining, &p.UnitPriceMinor, &p.Currency, &p.PurchasedOn,
+			&p.CreditsRemaining, &p.UnitPriceMinor, &p.ValueMinor, &p.Currency, &p.PurchasedOn,
 			&p.ExpiresAt, &status, &p.ServerSeq); err != nil {
 			return Balance{}, errs.Internal(err, "scan package")
 		}
@@ -281,7 +311,7 @@ func (s *Service) PlanConsumption(ctx context.Context, tx pgx.Tx, in ConsumeInpu
 	// belongs. Expired and void packs are excluded — a credit that cannot be
 	// redeemed is not a credit.
 	rows, err := tx.Query(ctx, `
-		SELECT id, credits_remaining, unit_price_minor, currency
+		SELECT id, credits_remaining, unit_price_minor, currency, credits_total, value_minor
 		  FROM packages
 		 WHERE client_id = $1 AND status IN ('active', 'exhausted')
 		   AND (expires_at IS NULL OR expires_at >= $2)
@@ -296,12 +326,14 @@ func (s *Service) PlanConsumption(ctx context.Context, tx pgx.Tx, in ConsumeInpu
 		remaining int
 		unitPrice int64
 		currency  string
+		total     int
+		value     int64
 	}
 	var candidates []candidate
 	var available int
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.id, &c.remaining, &c.unitPrice, &c.currency); err != nil {
+		if err := rows.Scan(&c.id, &c.remaining, &c.unitPrice, &c.currency, &c.total, &c.value); err != nil {
 			rows.Close()
 			return nil, errs.Internal(err, "scan package")
 		}
@@ -342,10 +374,18 @@ func (s *Service) PlanConsumption(ctx context.Context, tx pgx.Tx, in ConsumeInpu
 			continue
 		}
 		take := min(outstanding, c.remaining)
-		planned = append(planned, Consumption{
+		consumption := Consumption{
 			PackageID: c.id, Credits: take,
 			UnitPrice: money.New(c.unitPrice, c.currency),
-		})
+		}
+		// The credit that empties a pack carries whatever its unit price
+		// could not. Undo reverses the whole journal entry, remainder
+		// included, so a pack refilled by an undo recognises it again when
+		// it next empties rather than twice.
+		if take == c.remaining {
+			consumption.RemainderMinor = remainderMinor(c.value, c.unitPrice, c.total)
+		}
+		planned = append(planned, consumption)
 		outstanding -= take
 	}
 
@@ -491,7 +531,7 @@ func (s *Service) ExpirePackages(ctx context.Context, tx pgx.Tx, tenantID ids.ID
 	today := truncateToDay(asOf)
 
 	rows, err := tx.Query(ctx, `
-		SELECT id, client_id, credits_remaining, unit_price_minor, currency
+		SELECT id, client_id, credits_remaining, unit_price_minor, currency, credits_total, value_minor
 		  FROM packages
 		 WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < $1
 		   AND credits_remaining > 0
@@ -506,11 +546,13 @@ func (s *Service) ExpirePackages(ctx context.Context, tx pgx.Tx, tenantID ids.ID
 		remaining int
 		unitPrice int64
 		currency  string
+		total     int
+		value     int64
 	}
 	var expired []lapsed
 	for rows.Next() {
 		var l lapsed
-		if err := rows.Scan(&l.id, &l.clientID, &l.remaining, &l.unitPrice, &l.currency); err != nil {
+		if err := rows.Scan(&l.id, &l.clientID, &l.remaining, &l.unitPrice, &l.currency, &l.total, &l.value); err != nil {
 			rows.Close()
 			return 0, errs.Internal(err, "scan expired package")
 		}
@@ -522,7 +564,9 @@ func (s *Service) ExpirePackages(ctx context.Context, tx pgx.Tx, tenantID ids.ID
 	}
 
 	for _, l := range expired {
-		amount := money.New(l.unitPrice, l.currency).Mul(int64(l.remaining))
+		// The emptying credit is among those lapsing, so the remainder goes
+		// with them.
+		amount := money.New(l.unitPrice*int64(l.remaining)+remainderMinor(l.value, l.unitPrice, l.total), l.currency)
 
 		// Discharge the liability: the training will now never be delivered,
 		// so leaving it in Deferred Revenue would understate profit forever

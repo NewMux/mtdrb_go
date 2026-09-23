@@ -8,7 +8,7 @@ GO ?= go
 OWNER_DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
 APP_DATABASE_URL   ?= postgres://coachpulse_app:coachpulse_app@localhost:5432/coachpulse?sslmode=disable
 
-.PHONY: help up down logs reset migrate migrate-down migrate-status sqlc generate \
+.PHONY: help up down logs reset migrate migrate-down migrate-status generate \
         build run worker test test-integration lint fmt vet tidy verify app-install app-start
 
 help: ## List available targets
@@ -37,10 +37,8 @@ migrate-down: ## Roll back the most recent migration
 migrate-status: ## Show migration state
 	DATABASE_URL="$(OWNER_DATABASE_URL)" $(GO) run ./cmd/migrate status
 
-sqlc: ## Regenerate type-safe query code
-	sqlc generate
-
-generate: sqlc ## Run all code generation
+generate: ## Regenerate the client's API types from api/openapi.yaml
+	cd app && npm run api-types
 
 build: ## Compile all binaries
 	$(GO) build ./...

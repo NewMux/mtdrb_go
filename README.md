@@ -32,7 +32,7 @@ walkthrough of both journeys.
 
 ## Architecture
 
-- **API** — Go 1.24, chi, sqlc, Postgres 16
+- **API** — Go 1.24, chi, pgx, Postgres 16; `api/openapi.yaml` is the contract, and the client's wire types are generated from it
 - **Tenant isolation** — Postgres row-level security; the API connects as a role
   that is neither superuser nor `BYPASSRLS`, so isolation fails *closed*
   ([ADR 0002](docs/adr/0002-tenant-isolation-via-rls.md))
@@ -44,8 +44,9 @@ walkthrough of both journeys.
 ```
 cmd/          api, worker and migrate binaries
 internal/
+  app/        the service graph, wired once for every binary and the HTTP tests
   platform/   money, ids, clock, errors, logger
-  db/         migrations, sqlc queries and generated code
+  db/         migrations and the pool
   ledger/     accounts, journal entries, posting rules
   billing/    invoices, payments, packages, credits
   crm/        clients, waivers, assessments
