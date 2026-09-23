@@ -14,14 +14,19 @@ import { ScrollView, View } from 'react-native';
 import * as outbox from '@/sync/outbox';
 import type { OutboxEntry } from '@/sync/outbox';
 import { ErrorCode } from '@/api/types';
+import { useT, type I18n } from '@/i18n';
 import { DEMO, useApp } from '@/state/app';
+import { usePreferences } from '@/state/preferences';
 import {
-  Banner, Body, Button, Caption, Card, Empty, Heading, Row, Screen, Spacer, Title,
+  Banner, Body, Button, Caption, Card, Empty, Heading, Label, Row, Screen, SegmentedChoice, Spacer, Title,
 } from '@/ui/components';
 import { space } from '@/ui/theme';
 
 export default function SyncScreen() {
   const { db, sync, syncNow, signOut, touch, account } = useApp();
+  const i18n = useT();
+  const { t, time } = i18n;
+  const preferences = usePreferences();
   const [failed, setFailed] = useState<OutboxEntry[]>([]);
 
   const load = useCallback(async () => {
@@ -52,11 +57,9 @@ export default function SyncScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}>
-        <Title>Sync</Title>
+        <Title>{t('syncScreen.title')}</Title>
         <Caption>
-          {sync.lastSyncAt
-            ? `Last synced ${new Date(sync.lastSyncAt).toLocaleTimeString()}`
-            : 'Not synced on this device yet'}
+          {sync.lastSyncAt ? t('syncScreen.lastSynced', { time: time(sync.lastSyncAt) }) : t('syncScreen.notYet')}
         </Caption>
 
         <Spacer size={space.lg} />
@@ -64,7 +67,7 @@ export default function SyncScreen() {
         {DEMO ? (
           <>
             <Banner
-              message={"This build has no server behind it. Everything you do is written to this device and queued \u2014 but nothing can be sent, so credits are not really burned, revenue is not recognised and invoices are not settled. That all happens in the ledger, behind an API."}
+              message={t('syncScreen.demo')}
               tone="warning"
             />
             <Spacer />
@@ -74,17 +77,14 @@ export default function SyncScreen() {
         <Card>
           <Row style={{ justifyContent: 'space-between' }}>
             <View>
-              <Body>{sync.pending} waiting to send</Body>
-              <Caption>
-                {sync.offline
-                  ? 'No connection. They are safe on this device.'
-                  : 'They send themselves in the background.'}
-              </Caption>
+              <Body>{t('syncScreen.waitingToSend', { count: sync.pending })}</Body>
+              <Caption>{sync.offline ? t('syncScreen.safeOffline') : t('syncScreen.sendThemselves')}</Caption>
             </View>
           </Row>
           <Spacer size={space.sm} />
           <Button
-            label="Sync now"
+            label={t('syncScreen.syncNow')}
+            icon="sync"
             tone="primary"
             busy={sync.running}
             onPress={() => { void syncNow(); }}
@@ -99,58 +99,99 @@ export default function SyncScreen() {
         ) : null}
 
         <Spacer size={space.lg} />
-        <Heading>Refused</Heading>
+        <Heading>{t('syncScreen.refused')}</Heading>
         <Spacer size={space.sm} />
 
         {failed.length === 0 ? (
-          <Empty title="Nothing refused" detail="Everything the server has seen, it accepted." />
+          <Empty icon="success" title={t('syncScreen.nothingRefused')} detail={t('syncScreen.nothingRefusedBody')} />
         ) : (
           failed.map((entry) => (
             <Card key={entry.id} style={{ marginBottom: space.sm }}>
-              <Body>{describeOperation(entry)}</Body>
+              <Body>{describeOperation(entry, i18n)}</Body>
               <Spacer size={space.xs} />
               <Caption tone="danger">
-                {entry.error_message ?? 'The server refused this.'}
+                {entry.error_message ?? t('syncScreen.serverRefused')}
               </Caption>
               <Spacer size={space.sm} />
               <Row>
-                <Button label="Try again" style={{ flex: 1 }} onPress={() => { void retry(entry); }} />
-                <Button label="Discard" tone="danger" onPress={() => { void discard(entry); }} />
+                <Button label={t('common.retry')} style={{ flex: 1 }} onPress={() => { void retry(entry); }} />
+                <Button label={t('common.discard')} tone="danger" onPress={() => { void discard(entry); }} />
               </Row>
             </Card>
           ))
         )}
 
+        <Spacer size={space.xl} />
+        <Heading>{t('syncScreen.preferences')}</Heading>
+        <Spacer size={space.sm} />
+        <Card>
+          <Label>{t('syncScreen.language')}</Label>
+          <Spacer size={space.sm} />
+          <SegmentedChoice
+            options={[{ value: 'en', label: t('prefs.english') }, { value: 'ar', label: t('prefs.arabic') }] as const}
+            value={preferences.locale}
+            onChange={preferences.setLocale}
+          />
+          {preferences.restartPending ? (
+            <>
+              <Spacer size={space.sm} />
+              <Banner
+                tone="muted"
+                message={t('prefs.restartBody')}
+                action={{ label: t('prefs.restart'), onPress: preferences.restart }}
+              />
+            </>
+          ) : null}
+          <Spacer />
+          <Label>{t('syncScreen.digits')}</Label>
+          <Spacer size={space.sm} />
+          <SegmentedChoice
+            options={[{ value: 'latn', label: t('prefs.latin') }, { value: 'arab', label: t('prefs.arabicIndic') }] as const}
+            value={preferences.prefs.digits}
+            onChange={preferences.setDigits}
+          />
+          <Spacer />
+          <Label>{t('syncScreen.theme')}</Label>
+          <Spacer size={space.sm} />
+          <SegmentedChoice
+            options={[
+              { value: 'system', label: t('prefs.system') },
+              { value: 'light', label: t('prefs.light') },
+              { value: 'dark', label: t('prefs.dark') },
+            ] as const}
+            value={preferences.prefs.theme}
+            onChange={preferences.setTheme}
+          />
+        </Card>
+
         <Spacer size={space.xxl} />
         <Caption>{account?.email ?? ''}</Caption>
         <Spacer size={space.sm} />
-        <Button label="Sign out" tone="quiet" onPress={() => { void signOut(); }} />
+        <Button label={t('syncScreen.signOut')} icon="signOut" tone="quiet" onPress={() => { void signOut(); }} />
         <Spacer size={space.xs} />
-        <Caption>
-          Signing out leaves anything still waiting on this device. It sends when you sign back in.
-        </Caption>
+        <Caption>{t('syncScreen.signOutNote')}</Caption>
       </ScrollView>
     </Screen>
   );
 }
 
 /** What the trainer did, in their words rather than the operation's. */
-function describeOperation(entry: OutboxEntry): string {
+function describeOperation(entry: OutboxEntry, { t }: I18n): string {
   switch (entry.type) {
     case 'attendance.mark':
       return entry.error_code === ErrorCode.InsufficientCredits
-        ? 'Marking a session completed — the client had no credits left'
-        : 'Marking a session';
-    case 'workout.start': return 'Starting a workout';
-    case 'workout.log_set': return 'Logging a set';
-    case 'workout.complete': return 'Finishing a workout';
+        ? t('syncScreen.ops.markNoCredits')
+        : t('syncScreen.ops.mark');
+    case 'workout.start': return t('syncScreen.ops.startWorkout');
+    case 'workout.log_set': return t('syncScreen.ops.logSet');
+    case 'workout.complete': return t('syncScreen.ops.completeWorkout');
     case 'payment.record':
       return entry.error_code === ErrorCode.Overpayment
-        ? 'Recording a payment — it was more than the invoice owed'
-        : 'Recording a payment';
-    case 'client.create': return 'Adding a client';
-    case 'client.update': return 'Updating a client';
-    case 'biometrics.record': return 'Recording a measurement';
-    default: return 'A change';
+        ? t('syncScreen.ops.paymentOver')
+        : t('syncScreen.ops.payment');
+    case 'client.create': return t('syncScreen.ops.createClient');
+    case 'client.update': return t('syncScreen.ops.updateClient');
+    case 'biometrics.record': return t('syncScreen.ops.biometrics');
+    default: return t('syncScreen.ops.unknown');
   }
 }

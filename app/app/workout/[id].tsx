@@ -13,26 +13,32 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { cloneLastSession, completeWorkout, logSet } from '@/features/actions';
 import {
   previousSets, searchExercises, workoutSets, type LoggedSet,
 } from '@/features/queries';
+import { useT } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
 import {
   Body, Button, Caption, Card, Empty, Field, Heading, NumberField,
   Row, Screen, Spacer, TextButton, Title,
 } from '@/ui/components';
+import { Icon } from '@/ui/icon';
 import { load as formatLoad, parseLoad, parseReps, parseRpe, rpe as formatRpe } from '@/ui/format';
-import { colors, radius, space, type as typography } from '@/ui/theme';
+import { radius, space } from '@/ui/theme';
+import { makeStyles, useTheme } from '@/ui/theming';
 
 export default function WorkoutScreen() {
   const params = useLocalSearchParams<{ id: string; client?: string; name?: string }>();
   const workoutId = params.id;
   const clientId = params.client ?? '';
-  const clientName = params.name ?? 'Workout';
+  const { t } = useT();
+  const { colors } = useTheme();
+  const styles = useStyles();
+  const clientName = params.name ?? t('workout.fallbackTitle');
 
   const { db, touch, syncNow } = useApp();
   const router = useRouter();
@@ -143,12 +149,12 @@ export default function WorkoutScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Title>{clientName}</Title>
-        <Caption>{all.filter((s) => s.completed === 1).length} sets logged</Caption>
+        <Caption>{t('workout.setsLogged', { count: all.filter((s) => s.completed === 1).length })}</Caption>
         <Spacer size={space.lg} />
 
         {/* Exercises already in this workout, plus a way to add one. */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <Row style={{ paddingRight: space.md }}>
+          <Row style={{ paddingEnd: space.md }}>
             {inWorkout.map((exercise) => (
               <Pressable
                 key={exercise.id}
@@ -164,11 +170,11 @@ export default function WorkoutScreen() {
             ))}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Add exercise"
+              accessibilityLabel={t('workout.addExercise')}
               onPress={() => setPicking(!picking)}
               style={[styles.chip, picking && styles.chipActive]}
             >
-              <Text style={[styles.chipLabel, picking && styles.chipLabelActive]}>+ Exercise</Text>
+              <Text style={[styles.chipLabel, picking && styles.chipLabelActive]}>{t('workout.addExerciseChip')}</Text>
             </Pressable>
           </Row>
         </ScrollView>
@@ -178,10 +184,10 @@ export default function WorkoutScreen() {
         {picking ? (
           <Card>
             <Field
-              label="Find an exercise"
+              label={t('workout.findExercise')}
               value={search}
               onChangeText={setSearch}
-              placeholder="Bench press, hinge, dumbbell…"
+              placeholder={t('workout.findPlaceholder')}
               autoCapitalize="none"
             />
             <Spacer size={space.sm} />
@@ -196,22 +202,23 @@ export default function WorkoutScreen() {
                 <Caption>{[exercise.category, exercise.equipment].filter(Boolean).join(' · ')}</Caption>
               </Pressable>
             ))}
-            {(results.data ?? []).length === 0 ? <Caption>No exercise matches that.</Caption> : null}
+            {(results.data ?? []).length === 0 ? <Caption>{t('workout.noMatch')}</Caption> : null}
           </Card>
         ) : null}
 
         {!current ? (
           <Empty
-            title="Pick a lift"
-            detail="Choose an exercise to start logging sets."
+            icon="programs"
+            title={t('workout.pickLift')}
+            detail={t('workout.pickLiftBody')}
           />
         ) : (
           <>
             <Card>
               <Row style={{ justifyContent: 'space-between' }}>
-                <Heading>{currentName || 'Exercise'}</Heading>
+                <Heading>{currentName || t('workout.exercise')}</Heading>
                 {(last.data ?? []).length > 0 ? (
-                  <TextButton label="Repeat last time" onPress={() => { void clone(); }} />
+                  <TextButton label={t('workout.repeatLast')} onPress={() => { void clone(); }} />
                 ) : null}
               </Row>
 
@@ -219,9 +226,9 @@ export default function WorkoutScreen() {
                 <>
                   <Spacer size={space.sm} />
                   <Caption>
-                    Last time: {(last.data ?? [])
-                      .map((s) => `${s.reps ?? '—'} × ${formatLoad(s.loadGrams)}`)
-                      .join(', ')}
+                    {t('workout.lastTime', {
+                      sets: (last.data ?? []).map((s) => `${s.reps ?? '—'} × ${formatLoad(s.loadGrams)}`).join(', '),
+                    })}
                   </Caption>
                 </>
               ) : null}
@@ -229,14 +236,14 @@ export default function WorkoutScreen() {
               <Spacer size={space.lg} />
 
               {currentSets.length === 0 ? (
-                <Caption>No sets yet.</Caption>
+                <Caption>{t('workout.noSets')}</Caption>
               ) : (
                 currentSets.map((set) => (
                   <Pressable
                     key={set.id}
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: set.completed === 1 }}
-                    accessibilityLabel={`Set ${set.setIndex}`}
+                    accessibilityLabel={t('workout.setA11y', { index: set.setIndex })}
                     onPress={() => { void confirm(set); }}
                     style={({ pressed }) => [
                       styles.setRow,
@@ -245,12 +252,14 @@ export default function WorkoutScreen() {
                     ]}
                   >
                     <Text style={styles.setIndex}>{set.setIndex}</Text>
-                    <Text style={styles.setValue}>{set.reps ?? '—'} reps</Text>
+                    <Text style={styles.setValue}>{set.reps === null ? '—' : t('workout.repsValue', { count: set.reps })}</Text>
                     <Text style={styles.setValue}>{formatLoad(set.loadGrams)}</Text>
-                    <Text style={styles.setRpe}>RPE {formatRpe(set.rpeTenths)}</Text>
-                    <Text style={[styles.setMark, set.completed === 1 && styles.setMarkDone]}>
-                      {set.completed === 1 ? '✓' : 'tap'}
-                    </Text>
+                    <Text style={styles.setRpe}>{t('workout.rpeValue', { value: formatRpe(set.rpeTenths) })}</Text>
+                    <View style={styles.setMark}>
+                      {set.completed === 1
+                        ? <Icon name="check" size={18} color={colors.success} strokeWidth={3} />
+                        : <Text style={styles.setRpe}>{t('workout.tap')}</Text>}
+                    </View>
                   </Pressable>
                 ))
               )}
@@ -258,13 +267,13 @@ export default function WorkoutScreen() {
               <Spacer size={space.lg} />
 
               <Row>
-                <NumberField label="Reps" value={reps} onChangeText={setReps} placeholder="8" />
-                <NumberField label="kg" value={kg} onChangeText={setKg} placeholder="80" />
-                <NumberField label="RPE" value={rpeInput} onChangeText={setRpeInput} placeholder="8" />
+                <NumberField label={t('workout.reps')} value={reps} onChangeText={setReps} placeholder="8" />
+                <NumberField label={t('workout.kg')} value={kg} onChangeText={setKg} placeholder="80" />
+                <NumberField label={t('workout.rpe')} value={rpeInput} onChangeText={setRpeInput} placeholder="8" />
               </Row>
               <Spacer size={space.sm} />
               <Button
-                label={`Log set ${nextIndex}`}
+                label={t('workout.logSet', { index: nextIndex })}
                 tone="primary"
                 onPress={() => { void addSet(); }}
                 disabled={parseReps(reps) === null && parseLoad(kg) === null}
@@ -272,7 +281,7 @@ export default function WorkoutScreen() {
             </Card>
 
             <Spacer size={space.xl} />
-            <Button label="Finish workout" onPress={() => { void finish(); }} />
+            <Button label={t('workout.finish')} onPress={() => { void finish(); }} />
           </>
         )}
       </ScrollView>
@@ -280,7 +289,7 @@ export default function WorkoutScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, type }) => ({
   chip: {
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
@@ -290,8 +299,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  chipLabel: { ...typography.caption, color: colors.inkMuted },
-  chipLabelActive: { color: colors.bg },
+  chipLabel: { ...type.caption, color: colors.inkMuted },
+  chipLabelActive: { color: colors.onAccent },
 
   result: {
     paddingVertical: space.md,
@@ -311,9 +320,8 @@ const styles = StyleSheet.create({
   },
   /** A cloned set: present, legible, and plainly not yet performed. */
   setRowPending: { opacity: 0.55 },
-  setIndex: { ...typography.caption, color: colors.inkMuted, width: 16 },
-  setValue: { ...typography.heading, color: colors.ink },
-  setRpe: { ...typography.caption, color: colors.inkMuted },
-  setMark: { ...typography.caption, color: colors.inkMuted, width: 28, textAlign: 'right' },
-  setMarkDone: { color: colors.success, fontSize: 18 },
-});
+  setIndex: { ...type.caption, color: colors.inkMuted, width: 16 },
+  setValue: { ...type.heading, color: colors.ink },
+  setRpe: { ...type.caption, color: colors.inkMuted },
+  setMark: { width: 32, alignItems: 'flex-end' },
+}));

@@ -13,14 +13,14 @@ import { recordBiometrics, startWorkout } from '@/features/actions';
 import {
   biometricHistory, clientDetail, openWorkout, outstandingInvoices, recentWorkouts,
 } from '@/features/queries';
+import { daysUntil, useT } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
 import {
   Body, Button, Caption, Card, Divider, Label, Metric, NumberField,
   Row, Screen, Spacer, TextButton, Title,
 } from '@/ui/components';
 import {
-  bodyFat as formatBodyFat, dueLabel, load as formatLoad, money,
-  parseBodyFat, parseWeight, shortDate,
+  bodyFat as formatBodyFat, load as formatLoad, parseBodyFat, parseWeight,
 } from '@/ui/format';
 import { space } from '@/ui/theme';
 
@@ -28,6 +28,8 @@ export default function ClientScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { db, account, touch, syncNow } = useApp();
   const router = useRouter();
+  const i18n = useT();
+  const { t, money, date } = i18n;
 
   const [weighing, setWeighing] = useState(false);
   const [weight, setWeight] = useState('');
@@ -82,7 +84,7 @@ export default function ClientScreen() {
     return (
       <Screen>
         <View style={{ padding: space.lg }}>
-          <Body muted>{client.loading ? 'Loading…' : 'This client is not on this device.'}</Body>
+          <Body muted>{client.loading ? t('common.loading') : t('client.notOnDevice')}</Body>
         </View>
       </Screen>
     );
@@ -104,25 +106,25 @@ export default function ClientScreen() {
         <Card tone="accent">
           <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <Metric
-              value={String(profile.creditsRemaining)}
-              unit={profile.creditsRemaining === 1 ? 'session' : 'sessions'}
-              label={profile.creditsRemaining < 0 ? 'overdrawn' : 'left on their pack'}
+              value={i18n.number(profile.creditsRemaining)}
+              unit={t('client.session', { count: profile.creditsRemaining })}
+              label={profile.creditsRemaining < 0 ? t('client.overdrawn') : t('client.leftOnPack')}
               tone="onAccent"
             />
-            {profile.nextExpiry ? <Caption tone="onAccent">expires {shortDate(profile.nextExpiry)}</Caption> : null}
+            {profile.nextExpiry ? <Caption tone="onAccent">{t('client.expires', { date: date(profile.nextExpiry, 'short') })}</Caption> : null}
           </Row>
         </Card>
 
         <Spacer />
         <Row>
           <Button
-            label="Start a workout"
+            label={t('client.startWorkout')}
             tone={profile.creditsRemaining > 0 ? 'primary' : 'default'}
             style={{ flex: 1 }}
             onPress={() => { void train(); }}
           />
           <Button
-            label="Sell a pack"
+            label={t('client.sellPack')}
             tone={profile.creditsRemaining <= 0 ? 'primary' : 'default'}
             style={{ flex: 1 }}
             onPress={() => router.push({
@@ -133,18 +135,18 @@ export default function ClientScreen() {
         </Row>
 
         <Spacer size={space.xl} />
-        <Label>Owing</Label>
+        <Label>{t('client.owing')}</Label>
         <Spacer />
         {(invoices.data ?? []).length === 0 ? (
-          <Caption>Nothing outstanding.</Caption>
+          <Caption>{t('client.nothingOutstanding')}</Caption>
         ) : (
           (invoices.data ?? []).map((invoice) => (
             <Card key={invoice.id} style={{ marginBottom: space.sm }}>
               <Row style={{ justifyContent: 'space-between' }}>
                 <View>
-                  <Body>{invoice.number ?? 'Draft'}</Body>
-                  <Caption tone={isOverdue(invoice.dueDate) ? 'danger' : 'muted'}>
-                    {dueLabel(invoice.dueDate) || 'no due date'}
+                  <Body>{invoice.number ?? t('client.draft')}</Body>
+                  <Caption tone={invoice.dueDate && daysUntil(invoice.dueDate) < 0 ? 'danger' : 'muted'}>
+                    {i18n.due(invoice.dueDate) || t('due.none')}
                   </Caption>
                 </View>
                 <Body>{money(invoice.totalMinor - invoice.paidMinor, invoice.currency || currency)}</Body>
@@ -155,20 +157,20 @@ export default function ClientScreen() {
 
         <Spacer size={space.lg} />
         <Row style={{ justifyContent: 'space-between' }}>
-          <Label>Measurements</Label>
-          <TextButton label={weighing ? 'Cancel' : 'Record'} onPress={() => setWeighing(!weighing)} />
+          <Label>{t('client.measurements')}</Label>
+          <TextButton label={weighing ? t('common.cancel') : t('common.record')} onPress={() => setWeighing(!weighing)} />
         </Row>
         <Spacer size={space.sm} />
 
         {weighing ? (
           <Card>
             <Row>
-              <NumberField label="Weight (kg)" value={weight} onChangeText={setWeight} placeholder="82.4" />
-              <NumberField label="Body fat (%)" value={fat} onChangeText={setFat} placeholder="15.5" />
+              <NumberField label={t('client.weightKg')} value={weight} onChangeText={setWeight} placeholder="82.4" />
+              <NumberField label={t('client.bodyFat')} value={fat} onChangeText={setFat} placeholder="15.5" />
             </Row>
             <Spacer size={space.sm} />
             <Button
-              label="Save measurement"
+              label={t('client.saveMeasurement')}
               tone="primary"
               onPress={() => { void saveMeasurement(); }}
               disabled={parseWeight(weight) === null && parseBodyFat(fat) === null}
@@ -177,7 +179,7 @@ export default function ClientScreen() {
         ) : null}
 
         {(measurements.data ?? []).length === 0 ? (
-          weighing ? null : <Caption>No measurements recorded.</Caption>
+          weighing ? null : <Caption>{t('client.noMeasurements')}</Caption>
         ) : (
           <>
             <Spacer size={space.sm} />
@@ -186,7 +188,7 @@ export default function ClientScreen() {
                 <View key={entry.id}>
                   {i > 0 ? <Divider /> : null}
                   <Row style={{ justifyContent: 'space-between', paddingVertical: space.md }}>
-                    <Caption>{shortDate(entry.measuredOn)}</Caption>
+                    <Caption>{date(entry.measuredOn, 'medium')}</Caption>
                     <Body>{formatLoad(entry.weightGrams)}</Body>
                     <Caption>{formatBodyFat(entry.bodyFatBP)}</Caption>
                   </Row>
@@ -197,20 +199,20 @@ export default function ClientScreen() {
         )}
 
         <Spacer size={space.xl} />
-        <Label>Recent training</Label>
+        <Label>{t('client.recentTraining')}</Label>
         <Spacer />
         {(workouts.data ?? []).length === 0 ? (
-          <Caption>No workouts logged yet.</Caption>
+          <Caption>{t('client.noWorkouts')}</Caption>
         ) : (
           <Card>
             {(workouts.data ?? []).map((workout, i) => (
               <View key={workout.id}>
                 {i > 0 ? <Divider /> : null}
                 <Row style={{ justifyContent: 'space-between', paddingVertical: space.md }}>
-                  <Caption>{shortDate(workout.performedOn)}</Caption>
-                  <Body>{workout.setCount} sets</Body>
+                  <Caption>{date(workout.performedOn, 'medium')}</Caption>
+                  <Body>{t('client.sets', { count: workout.setCount })}</Body>
                   <Caption>
-                    {workout.volumeGrams > 0 ? `${Math.round(workout.volumeGrams / 1000)} kg moved` : workout.status}
+                    {workout.volumeGrams > 0 ? t('client.kgMoved', { count: Math.round(workout.volumeGrams / 1000) }) : workout.status}
                   </Caption>
                 </Row>
               </View>
@@ -220,9 +222,4 @@ export default function ClientScreen() {
       </ScrollView>
     </Screen>
   );
-}
-
-function isOverdue(dueDate: string | null): boolean {
-  if (!dueDate) return false;
-  return new Date(dueDate).getTime() < new Date().setHours(0, 0, 0, 0);
 }

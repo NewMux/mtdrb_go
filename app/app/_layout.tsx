@@ -1,18 +1,24 @@
 /**
  * The root layout.
  *
- * Holds the provider everything else reads from, and the one piece of routing
- * logic that is not a screen: whether the trainer is signed in.
+ * Holds the providers everything else reads from — the local database and
+ * account, then the device's language and appearance, then the overlays a
+ * screen can raise — and the one piece of routing logic that is not a screen:
+ * whether the trainer is signed in.
  */
 
 import React, { useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
+import { useT } from '@/i18n';
 import { AppProvider, useApp } from '@/state/app';
-import { colors, space, type as typography } from '@/ui/theme';
+import { PreferencesProvider } from '@/state/preferences';
+import { OverlayProvider } from '@/ui/overlay';
+import { space } from '@/ui/theme';
+import { makeStyles, useTheme } from '@/ui/theming';
 
 /**
  * Sends the trainer to the right place.
@@ -38,15 +44,19 @@ function AuthGate() {
 
 function Shell() {
   const { ready, fatal } = useApp();
+  const { t } = useT();
+  const theme = useTheme();
+  const styles = useStyles();
+  const { colors } = theme;
 
   // No local database means no app: every screen reads from it. Saying so
   // beats a spinner that never stops.
   if (fatal) {
     return (
       <View style={styles.centre}>
-        <Text style={styles.fatalTitle}>Can&apos;t open storage</Text>
+        <Text style={styles.fatalTitle}>{t('shell.storageTitle')}</Text>
         <Text style={styles.fatalBody}>
-          CoachPulse keeps everything on the device, and this browser will not let it.
+          {t('shell.storageBody')}
           {'\n\n'}
           {fatal}
         </Text>
@@ -57,13 +67,14 @@ function Shell() {
   if (!ready) {
     return (
       <View style={styles.centre}>
-        <ActivityIndicator color={colors.accent} size="large" />
+        <ActivityIndicator color={colors.accentInk} size="large" />
       </View>
     );
   }
 
   return (
     <>
+      <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
       <AuthGate />
       <Stack
         screenOptions={{
@@ -75,11 +86,11 @@ function Shell() {
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
-        <Stack.Screen name="client/[id]" options={{ title: 'Client' }} />
-        <Stack.Screen name="client/new" options={{ title: 'New client', presentation: 'modal' }} />
-        <Stack.Screen name="workout/[id]" options={{ title: 'Workout' }} />
-        <Stack.Screen name="sell-package" options={{ title: 'Sell a package', presentation: 'modal' }} />
-        <Stack.Screen name="sync" options={{ title: 'Sync', presentation: 'modal' }} />
+        <Stack.Screen name="client/[id]" options={{ title: t('client.title') }} />
+        <Stack.Screen name="client/new" options={{ title: t('newClient.title'), presentation: 'modal' }} />
+        <Stack.Screen name="workout/[id]" options={{ title: t('workout.fallbackTitle') }} />
+        <Stack.Screen name="sell-package" options={{ title: t('sellPackage.title'), presentation: 'modal' }} />
+        <Stack.Screen name="sync" options={{ title: t('syncScreen.title'), presentation: 'modal' }} />
       </Stack>
     </>
   );
@@ -88,15 +99,18 @@ function Shell() {
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
       <AppProvider>
-        <Shell />
+        <PreferencesProvider>
+          <OverlayProvider>
+            <Shell />
+          </OverlayProvider>
+        </PreferencesProvider>
       </AppProvider>
     </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, type }) => ({
   centre: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -104,6 +118,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: space.xl,
   },
-  fatalTitle: { ...typography.title, color: colors.ink, marginBottom: space.md },
-  fatalBody: { ...typography.body, color: colors.inkMuted, textAlign: 'center' },
-});
+  fatalTitle: { ...type.title, color: colors.ink, marginBottom: space.md },
+  fatalBody: { ...type.body, color: colors.inkMuted, textAlign: 'center' },
+}));

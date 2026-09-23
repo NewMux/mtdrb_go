@@ -19,24 +19,26 @@ import { useFocusEffect } from 'expo-router';
 import { recordPayment } from '@/features/actions';
 import { outstandingInvoices, type InvoiceSummary } from '@/features/queries';
 import type { PaymentInstrument } from '@/api/types';
+import { useT } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
 import {
   Body, Button, Caption, Card, Empty, Field, Label, Metric, NumberField,
   Row, Screen, SegmentedChoice, Spacer, Title,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
-import { amountText, dueLabel, money, parseMoney } from '@/ui/format';
-import { colors, space } from '@/ui/theme';
+import { amountText, parseMoney } from '@/ui/format';
+import { daysUntil } from '@/i18n';
+import { space } from '@/ui/theme';
+import { useTheme } from '@/ui/theming';
 
-const INSTRUMENTS: readonly { value: PaymentInstrument; label: string }[] = [
-  { value: 'bank_transfer', label: 'Bank' },
-  { value: 'cash', label: 'Cash' },
-  { value: 'digital_wallet', label: 'Wallet' },
-  { value: 'cheque', label: 'Cheque' },
-];
+const INSTRUMENTS: readonly PaymentInstrument[] = ['bank_transfer', 'cash', 'digital_wallet', 'cheque'];
 
 export default function MoneyScreen() {
   const { db, account, touch, syncNow, sync } = useApp();
+  const i18n = useT();
+  const { t, money, amount: formatAmount } = i18n;
+  const { colors } = useTheme();
+  const instruments = INSTRUMENTS.map((value) => ({ value, label: t(`instruments.${value}`) }));
 
   const [open, setOpen] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
@@ -103,8 +105,8 @@ export default function MoneyScreen() {
       >
         <Row style={{ justifyContent: 'space-between' }}>
           <View>
-            <Title>Money</Title>
-            <Caption>{rows.length} invoice{rows.length === 1 ? '' : 's'} outstanding</Caption>
+            <Title>{t('money.title')}</Title>
+            <Caption>{t('money.outstanding', { count: rows.length })}</Caption>
           </View>
           <SyncBadge />
         </Row>
@@ -112,14 +114,14 @@ export default function MoneyScreen() {
         <Spacer size={space.lg} />
         <Card tone="accent">
           {totals.length === 0 ? (
-            <Metric value="0.00" unit={fallbackCurrency} label="owed to you" tone="onAccent" />
+            <Metric value={formatAmount(0, fallbackCurrency)} unit={fallbackCurrency} label={t('money.owedToYou')} tone="onAccent" />
           ) : (
             totals.map(([currency, minor]) => (
               <View key={currency} style={{ marginBottom: space.sm }}>
                 <Metric
-                  value={money(minor, currency).replace(` ${currency}`, '')}
+                  value={formatAmount(minor, currency)}
                   unit={currency}
-                  label="owed to you"
+                  label={t('money.owedToYou')}
                   tone="onAccent"
                 />
               </View>
@@ -128,26 +130,27 @@ export default function MoneyScreen() {
         </Card>
 
         <Spacer size={space.xl} />
-        <Label>Awaiting payment</Label>
+        <Label>{t('money.awaiting')}</Label>
         <Spacer />
 
         {rows.length === 0 ? (
           <Empty
-            title="Nothing outstanding"
-            detail={invoices.loading ? 'Loading…' : 'Every issued invoice has been settled.'}
+            icon="money"
+            title={t('money.nothingOutstanding')}
+            detail={invoices.loading ? t('common.loading') : t('money.allSettled')}
           />
         ) : (
           rows.map((invoice) => {
             const balance = invoice.totalMinor - invoice.paidMinor;
             const currency = invoice.currency || fallbackCurrency;
-            const label = dueLabel(invoice.dueDate);
-            const late = label.endsWith('overdue');
+            const label = i18n.due(invoice.dueDate);
+            const late = invoice.dueDate !== null && daysUntil(invoice.dueDate) < 0;
 
             return (
               <Pressable
                 key={invoice.id}
                 accessibilityRole="button"
-                accessibilityLabel={`${invoice.clientName}, ${money(balance, currency)} outstanding`}
+                accessibilityLabel={t('money.outstandingA11y', { name: invoice.clientName, amount: money(balance, currency) })}
                 onPress={() => expand(invoice)}
                 style={{ marginBottom: space.md }}
               >
@@ -156,16 +159,16 @@ export default function MoneyScreen() {
                   <View style={{ flex: 1 }}>
                     <Body>{invoice.clientName}</Body>
                     <Caption tone={late ? 'danger' : 'muted'}>
-                      {[invoice.number, label].filter(Boolean).join(' · ') || 'issued'}
+                      {[invoice.number, label].filter(Boolean).join(' · ') || t('money.issued')}
                     </Caption>
                     {recorded.has(invoice.id) ? (
-                      <Caption tone="success">Payment recorded — waiting on the server</Caption>
+                      <Caption tone="success">{t('money.recorded')}</Caption>
                     ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Body>{money(balance, currency)}</Body>
                     {invoice.paidMinor > 0 ? (
-                      <Caption>{money(invoice.paidMinor, currency)} paid</Caption>
+                      <Caption>{t('money.paid', { amount: money(invoice.paidMinor, currency) })}</Caption>
                     ) : null}
                   </View>
                 </Row>
@@ -174,25 +177,22 @@ export default function MoneyScreen() {
                   <>
                     <Spacer />
                     <Row>
-                      <NumberField label={`Amount (${currency})`} value={amount} onChangeText={setAmount} />
+                      <NumberField label={t('money.amount', { currency })} value={amount} onChangeText={setAmount} />
                     </Row>
                     <Spacer size={space.sm} />
-                    <SegmentedChoice options={INSTRUMENTS} value={instrument} onChange={setInstrument} />
+                    <SegmentedChoice options={instruments} value={instrument} onChange={setInstrument} />
                     <Spacer size={space.sm} />
                     <Field
-                      label="Reference"
+                      label={t('money.reference')}
                       value={reference}
                       onChangeText={setReference}
-                      placeholder="Bank reference, envelope, cheque number"
+                      placeholder={t('money.referencePlaceholder')}
                     />
                     <Spacer size={space.sm} />
-                    <Caption>
-                      Received money moves between your accounts. It is not income —
-                      that was earned when the sessions were delivered.
-                    </Caption>
+                    <Caption>{t('money.notIncome')}</Caption>
                     <Spacer size={space.sm} />
                     <Button
-                      label="Record payment"
+                      label={t('money.recordPayment')}
                       tone="primary"
                       onPress={() => { void record(invoice); }}
                       disabled={(parseMoney(amount, currency) ?? 0) <= 0}

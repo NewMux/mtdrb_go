@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
-  money, load, rpe, bodyFat, rest, repRange, dueLabel,
+  money, load, rpe, bodyFat, rest, repRange,
   parseLoad, parseMoney, parseRpe, parseReps, parseBodyFat, currencyExponent,
 } from '@/ui/format';
 
@@ -68,14 +68,6 @@ describe('formatting', () => {
     expect(repRange(6, 8)).toBe('6–8');
     expect(repRange(8, 8)).toBe('8');
     expect(repRange(5, null)).toBe('5');
-  });
-
-  it('says how overdue an invoice is in plain words', () => {
-    const today = new Date('2026-05-10T12:00:00Z');
-    expect(dueLabel('2026-05-07', today)).toBe('3 days overdue');
-    expect(dueLabel('2026-05-10', today)).toBe('due today');
-    expect(dueLabel('2026-05-15', today)).toBe('due in 5 days');
-    expect(dueLabel('2026-05-09', today)).toBe('1 day overdue');
   });
 });
 

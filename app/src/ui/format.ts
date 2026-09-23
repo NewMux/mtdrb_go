@@ -87,28 +87,6 @@ export function repRange(min?: number | null, max?: number | null): string {
   return `${min}–${max}`;
 }
 
-/** A time of day, as "09:00". */
-export function clockTime(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-/** A date a person reads: "Fri 1 May". */
-export function shortDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-}
-
-/** "3 days overdue", "due today", "due in 5 days". */
-export function dueLabel(dueDate: string | null | undefined, today = new Date()): string {
-  if (!dueDate) return '';
-  const due = new Date(dueDate);
-  const days = Math.round((due.getTime() - startOfDay(today).getTime()) / 86_400_000);
-  if (days < 0) return `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} overdue`;
-  if (days === 0) return 'due today';
-  return `due in ${days} day${days === 1 ? '' : 's'}`;
-}
-
 /**
  * The inverse direction: what a trainer types, turned back into integers.
  *
@@ -182,10 +160,6 @@ function parseNumber(text: string): number | null {
   if (!/^-?\d*\.?\d+$/.test(trimmed)) return null;
   const value = Number(trimmed);
   return Number.isFinite(value) ? value : null;
-}
-
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
 function trimZeros(s: string): string {

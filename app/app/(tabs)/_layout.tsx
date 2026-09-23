@@ -16,28 +16,40 @@
  */
 
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 
-import { colors, FAB_SIZE, radius, space, type as typography } from '@/ui/theme';
+import { useT } from '@/i18n';
+import { Icon, type IconName } from '@/ui/icon';
+import { FAB_SIZE, radius, space } from '@/ui/theme';
+import { makeStyles, useTheme } from '@/ui/theming';
 
 function AddClientButton() {
   const router = useRouter();
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const { t } = useT();
   return (
     <View pointerEvents="box-none" style={styles.fabWrap}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Add client"
+        accessibilityLabel={t('nav.addClient')}
         onPress={() => router.push('/client/new')}
         style={({ pressed }) => [styles.fab, pressed && { opacity: 0.8 }]}
       >
-        <Text style={styles.fabGlyph}>+</Text>
+        <Icon name="add" size={28} color={colors.onAccent} strokeWidth={2.5} />
       </Pressable>
     </View>
   );
 }
 
+const tabIcon = (name: IconName) => ({ color, size }: { color: string; size: number }) => (
+  <Icon name={name} color={color} size={size - 4} />
+);
+
 export default function TabsLayout() {
+  const { colors, type } = useTheme();
+  const { t } = useT();
   return (
     <>
       <Tabs
@@ -49,27 +61,24 @@ export default function TabsLayout() {
             borderTopWidth: 0,
             height: 78,
             paddingBottom: space.lg,
-            paddingTop: space.md,
+            paddingTop: space.sm,
           },
-          tabBarActiveTintColor: colors.accent,
+          tabBarActiveTintColor: colors.accentInk,
           tabBarInactiveTintColor: colors.inkMuted,
-          tabBarLabelStyle: { ...typography.caption },
-          // No icon set is bundled, and a label a trainer can read in a dim
-          // gym beats a glyph they have to decode.
-          tabBarIconStyle: { display: 'none' },
+          tabBarLabelStyle: { ...type.caption },
         }}
       >
-        <Tabs.Screen name="index" options={{ title: 'Today' }} />
-        <Tabs.Screen name="dashboard" options={{ title: 'Practice' }} />
-        <Tabs.Screen name="clients" options={{ title: 'Clients' }} />
-        <Tabs.Screen name="money" options={{ title: 'Money' }} />
+        <Tabs.Screen name="index" options={{ title: t('nav.today'), tabBarIcon: tabIcon('today') }} />
+        <Tabs.Screen name="dashboard" options={{ title: t('nav.practice'), tabBarIcon: tabIcon('dashboard') }} />
+        <Tabs.Screen name="clients" options={{ title: t('nav.clients'), tabBarIcon: tabIcon('clients') }} />
+        <Tabs.Screen name="money" options={{ title: t('nav.money'), tabBarIcon: tabIcon('money') }} />
       </Tabs>
       <AddClientButton />
     </>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors }) => ({
   // Anchored to the bar rather than placed in it: a tab bar item cannot break
   // out of its own bounds, and the overhang is the whole point of the shape.
   fabWrap: {
@@ -89,15 +98,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     // Lifted off the page rather than outlined against it.
     shadowColor: '#000',
-    shadowOpacity: 0.45,
+    shadowOpacity: 0.35,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
-  fabGlyph: {
-    fontSize: 30,
-    lineHeight: 34,
-    fontWeight: '600',
-    color: colors.onAccent,
-  },
-});
+}));

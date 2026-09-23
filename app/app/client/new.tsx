@@ -11,6 +11,7 @@ import { ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { createClient } from '@/features/actions';
+import { useT } from '@/i18n';
 import { useApp } from '@/state/app';
 import { Body, Button, Field, Screen, Spacer, Title } from '@/ui/components';
 import { space } from '@/ui/theme';
@@ -18,6 +19,7 @@ import { space } from '@/ui/theme';
 export default function NewClientScreen() {
   const { db, touch, syncNow } = useApp();
   const router = useRouter();
+  const { t } = useT();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -42,27 +44,27 @@ export default function NewClientScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: space.lg }} keyboardShouldPersistTaps="handled">
-        <Title>New client</Title>
+        <Title>{t('newClient.title')}</Title>
         <Spacer size={space.xs} />
-        <Body muted>They exist the moment you save, with or without signal.</Body>
+        <Body muted>{t('newClient.intro')}</Body>
         <Spacer size={space.lg} />
 
-        <Field label="Full name" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
+        <Field label={t('newClient.fullName')} value={fullName} onChangeText={setFullName} autoCapitalize="words" />
         <Spacer />
         <Field
-          label="Email"
+          label={t('newClient.email')}
           value={email}
           onChangeText={setEmail}
           keyboardType="email-address"
           autoCapitalize="none"
-          hint="Optional. Needed to send them an invoice link."
+          hint={t('newClient.emailHint')}
         />
         <Spacer />
-        <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+        <Field label={t('newClient.phone')} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
 
         <Spacer size={space.xl} />
         <Button
-          label="Save client"
+          label={t('newClient.save')}
           tone="primary"
           onPress={() => { void save(); }}
           disabled={fullName.trim() === ''}

@@ -10,9 +10,10 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { listClients } from '@/features/queries';
+import { useT, type I18n } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
 import {
-  Body, Caption, Card, Chip, Empty, Field, Label, Row, Screen, Spacer, Title,
+  Avatar, Body, Caption, Card, Chip, Empty, Label, Row, Screen, SearchField, Spacer, Title,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
 import { space } from '@/ui/theme';
@@ -20,6 +21,8 @@ import { space } from '@/ui/theme';
 export default function ClientsScreen() {
   const router = useRouter();
   const { sync } = useApp();
+  const i18n = useT();
+  const { t } = i18n;
   const [search, setSearch] = useState('');
 
   const clients = useQuery((db) => listClients(db, search), [search]);
@@ -35,28 +38,28 @@ export default function ClientsScreen() {
       >
         <Row style={{ justifyContent: 'space-between' }}>
           <View>
-            <Title>Clients</Title>
-            <Caption>{rows.length} on the roster</Caption>
+            <Title>{t('clients.title')}</Title>
+            <Caption>{t('clients.onRoster', { count: rows.length })}</Caption>
           </View>
           <SyncBadge />
         </Row>
 
         <Spacer />
-        <Field
-          label="Search"
+        <SearchField
+          label={t('common.search')}
           value={search}
           onChangeText={setSearch}
-          placeholder="Name, email or phone"
-          autoCapitalize="none"
+          placeholder={t('clients.searchPlaceholder')}
         />
         <Spacer size={space.xl} />
-        <Label>{search ? 'Matches' : 'Everyone'}</Label>
+        <Label>{search ? t('clients.matches') : t('clients.everyone')}</Label>
         <Spacer />
 
         {rows.length === 0 ? (
           <Empty
-            title={search ? 'Nobody matches' : 'No clients yet'}
-            detail={search ? 'Try a different search.' : 'Tap + below to add your first client.'}
+            icon={search ? 'search' : 'clients'}
+            title={search ? t('clients.nobodyMatches') : t('clients.none')}
+            detail={search ? t('clients.tryDifferent') : t('clients.noneBody')}
           />
         ) : (
           rows.map((client) => (
@@ -69,16 +72,17 @@ export default function ClientsScreen() {
             >
               <Card>
                 <Row style={{ justifyContent: 'space-between' }}>
+                  <Avatar name={client.fullName} size={36} />
                   <View style={{ flex: 1 }}>
                     <Body>{client.fullName}</Body>
                     <Caption>{client.email ?? client.phone ?? client.status}</Caption>
                   </View>
                   <Row style={{ gap: space.sm }}>
                     <Caption tone={creditTone(client.creditsRemaining)}>
-                      {creditLabel(client.creditsRemaining)}
+                      {creditLabel(client.creditsRemaining, i18n)}
                     </Caption>
                     <Chip
-                      label={String(client.creditsRemaining)}
+                      label={i18n.number(client.creditsRemaining)}
                       tone={client.creditsRemaining > 0 ? 'accent' : 'danger'}
                     />
                   </Row>
@@ -91,7 +95,7 @@ export default function ClientsScreen() {
         {sync.offline ? (
           <>
             <Spacer />
-            <Caption>Showing the copy on this device. It refreshes when there is signal.</Caption>
+            <Caption>{t('clients.deviceCopy')}</Caption>
           </>
         ) : null}
       </ScrollView>
@@ -100,10 +104,10 @@ export default function ClientsScreen() {
 }
 
 /** A negative balance is a real state — an overdrawn client — and is shown as one. */
-function creditLabel(credits: number): string {
-  if (credits < 0) return `${credits} owed`;
-  if (credits === 0) return 'no credits';
-  return `${credits} credit${credits === 1 ? '' : 's'}`;
+function creditLabel(credits: number, { t }: I18n): string {
+  if (credits < 0) return t('clients.owed', { count: Math.abs(credits) });
+  if (credits === 0) return t('clients.noCredits');
+  return t('common.credits', { count: credits });
 }
 
 function creditTone(credits: number): 'muted' | 'warning' | 'danger' {

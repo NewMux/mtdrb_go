@@ -11,31 +11,32 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { markAttendance, startWorkout } from '@/features/actions';
 import { openWorkout, todaysRoster, type RosterEntry } from '@/features/queries';
 import type { AttendanceStatus } from '@/api/types';
+import { useT } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
 import {
-  Body, Button, Caption, Card, Chip, Empty, Heading, Label, Metric,
-  Pill, Row, Screen, Spacer, Title,
+  Avatar, Body, Button, Caption, Card, Chip, Empty, Heading, Label, Metric,
+  Pill, Progress, Row, Screen, Spacer, Title,
 } from '@/ui/components';
+import { useConfirm } from '@/ui/overlay';
 import { SyncBadge } from '@/ui/sync-badge';
-import { clockTime } from '@/ui/format';
-import { colors, radius, space, type as typography } from '@/ui/theme';
+import { space } from '@/ui/theme';
+import { makeStyles, useTheme } from '@/ui/theming';
 
-const OUTCOMES: { status: AttendanceStatus; label: string }[] = [
-  { status: 'completed', label: 'Completed' },
-  { status: 'no_show', label: 'No-show' },
-  { status: 'late_cancel', label: 'Late cancel' },
-  { status: 'early_cancel', label: 'Early cancel' },
-];
+const OUTCOMES: AttendanceStatus[] = ['completed', 'no_show', 'late_cancel', 'early_cancel'];
 
 export default function TodayScreen() {
   const { db, account, touch, syncNow, sync } = useApp();
   const router = useRouter();
+  const confirm = useConfirm();
+  const { t, time, date, number } = useT();
+  const { colors } = useTheme();
+  const styles = useStyles();
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const roster = useQuery((database) => todaysRoster(database), []);
@@ -60,23 +61,23 @@ export default function TodayScreen() {
    * to. What the trainer gets is the choice the PRD asks for: sell a renewal,
    * or let this one run into overdraft, decided before the client leaves.
    */
-  const confirmCompleted = (entry: RosterEntry) => {
+  const confirmCompleted = async (entry: RosterEntry) => {
     if (entry.creditsRemaining > 0) {
       void mark(entry, 'completed');
       return;
     }
-    Alert.alert(
-      'No credits left',
-      `${entry.clientName} has no credits remaining. Renew the package, or record this session against an overdraft.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Renew package',
-          onPress: () => router.push({ pathname: '/client/[id]', params: { id: entry.clientId } }),
-        },
-        { text: 'Complete anyway', onPress: () => { void mark(entry, 'completed', true); } },
+    // A sheet rather than Alert.alert: on the web Alert is a silent no-op,
+    // so tapping Completed for an out-of-credit client used to do nothing.
+    const choice = await confirm({
+      title: t('today.noCreditsTitle'),
+      message: t('today.noCreditsBody', { name: entry.clientName }),
+      actions: [
+        { value: 'renew', label: t('today.renew'), tone: 'primary' },
+        { value: 'overdraft', label: t('today.completeAnyway') },
       ],
-    );
+    });
+    if (choice === 'renew') router.push({ pathname: '/client/[id]', params: { id: entry.clientId } });
+    else if (choice === 'overdraft') void mark(entry, 'completed', true);
   };
 
   const toWorkout = async (entry: RosterEntry) => {
@@ -94,7 +95,7 @@ export default function TodayScreen() {
 
   const entries = roster.data ?? [];
   const marked = entries.filter((e) => e.status !== 'scheduled').length;
-  const firstName = (account?.display_name ?? '').split(' ')[0] || 'there';
+  const firstName = (account?.display_name ?? '').split(' ')[0] || t('today.greetingFallback');
 
   return (
     <Screen>
@@ -110,14 +111,10 @@ export default function TodayScreen() {
       >
         <Row style={{ justifyContent: 'space-between' }}>
           <Row>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarGlyph}>{firstName.slice(0, 1).toUpperCase()}</Text>
-            </View>
+            <Avatar name={account?.display_name ?? firstName} size={46} self />
             <View>
-              <Title>Hello {firstName}</Title>
-              <Caption>
-                {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
-              </Caption>
+              <Title>{t('today.greeting', { name: firstName })}</Title>
+              <Caption>{date(new Date(), 'long')}</Caption>
             </View>
           </Row>
           <SyncBadge />
@@ -130,55 +127,51 @@ export default function TodayScreen() {
         <Card tone="accent">
           <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <Metric
-              value={String(marked)}
-              unit={`/ ${entries.length}`}
-              label="sessions marked"
+              value={number(marked)}
+              unit={t('today.ofTotal', { count: entries.length })}
+              label={t('today.sessionsMarked')}
               tone="onAccent"
             />
             <Heading onAccent>
-              {entries.length === 0 ? 'Clear day' : marked === entries.length ? 'All done' : `${entries.length - marked} to go`}
+              {entries.length === 0
+                ? t('today.clearDay')
+                : marked === entries.length ? t('today.allDone') : t('today.toGo', { count: entries.length - marked })}
             </Heading>
           </Row>
           <Spacer />
-          <View style={styles.progressOnAccent}>
-            <View
-              style={[
-                styles.progressOnAccentFill,
-                { width: `${entries.length === 0 ? 0 : (marked / entries.length) * 100}%` },
-              ]}
-            />
-          </View>
+          <Progress value={entries.length === 0 ? 0 : marked / entries.length} onAccent />
         </Card>
 
         <Spacer size={space.xl} />
-        <Label>Roster</Label>
+        <Label>{t('today.roster')}</Label>
         <Spacer />
 
         {entries.length === 0 ? (
           <Empty
-            title="Nothing booked"
-            detail={roster.loading ? 'Loading…' : 'Sessions appear here as they sync.'}
+            icon="calendar"
+            title={t('today.nothingBooked')}
+            detail={roster.loading ? t('common.loading') : t('today.appearsAsSynced')}
           />
         ) : (
           entries.map((entry) => (
             <View key={entry.attendeeId} style={{ marginBottom: space.md }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${entry.clientName} at ${clockTime(entry.startsAt)}`}
+                accessibilityLabel={t('today.clientAt', { name: entry.clientName, time: time(entry.startsAt) })}
                 onPress={() => setExpanded(expanded === entry.attendeeId ? null : entry.attendeeId)}
               >
                 <Card>
                   <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <View style={{ flex: 1 }}>
                       <Row style={{ gap: space.md }}>
-                        <Text style={styles.time}>{clockTime(entry.startsAt)}</Text>
+                        <Text style={styles.time}>{time(entry.startsAt)}</Text>
                         <Text style={styles.name} numberOfLines={1}>{entry.clientName}</Text>
                       </Row>
                       <Spacer size={space.sm} />
                       <Row style={{ gap: space.sm }}>
                         <StatusPill status={entry.status} />
                         <Caption>
-                          {[entry.sessionTypeName, entry.location].filter(Boolean).join(' · ') || 'Session'}
+                          {[entry.sessionTypeName, entry.location].filter(Boolean).join(' · ') || t('common.session')}
                         </Caption>
                       </Row>
                     </View>
@@ -194,13 +187,13 @@ export default function TodayScreen() {
                       <View style={styles.grid}>
                         {OUTCOMES.map((outcome) => (
                           <Button
-                            key={outcome.status}
-                            label={outcome.label}
-                            tone={outcome.status === 'completed' ? 'primary' : 'default'}
+                            key={outcome}
+                            label={t(`attendance.${outcome}`)}
+                            tone={outcome === 'completed' ? 'primary' : 'default'}
                             style={styles.gridItem}
                             onPress={() => {
-                              if (outcome.status === 'completed') confirmCompleted(entry);
-                              else void mark(entry, outcome.status);
+                              if (outcome === 'completed') void confirmCompleted(entry);
+                              else void mark(entry, outcome);
                             }}
                           />
                         ))}
@@ -208,12 +201,12 @@ export default function TodayScreen() {
                       <Spacer size={space.sm} />
                       <Row>
                         <Button
-                          label="Log workout"
+                          label={t('today.logWorkout')}
                           style={{ flex: 1 }}
                           onPress={() => { void toWorkout(entry); }}
                         />
                         <Button
-                          label="Profile"
+                          label={t('today.profile')}
                           tone="quiet"
                           onPress={() => router.push({ pathname: '/client/[id]', params: { id: entry.clientId } })}
                         />
@@ -229,10 +222,7 @@ export default function TodayScreen() {
         {sync.pending > 0 ? (
           <>
             <Spacer />
-            <Body muted>
-              {sync.pending} change{sync.pending === 1 ? '' : 's'} waiting to reach the server. They are
-              safe on this device and will send themselves.
-            </Body>
+            <Body muted>{t('today.pendingChanges', { count: sync.pending })}</Body>
           </>
         ) : null}
       </ScrollView>
@@ -241,39 +231,18 @@ export default function TodayScreen() {
 }
 
 function StatusPill({ status }: { status: AttendanceStatus }) {
-  switch (status) {
-    case 'completed': return <Pill label="Completed" tone="success" />;
-    case 'no_show': return <Pill label="No-show" tone="danger" />;
-    case 'late_cancel': return <Pill label="Late cancel" tone="warning" />;
-    case 'early_cancel': return <Pill label="Early cancel" tone="muted" />;
-    default: return <Pill label="Scheduled" tone="muted" />;
-  }
+  const { t } = useT();
+  const tone = status === 'completed' ? 'success'
+    : status === 'no_show' ? 'danger'
+    : status === 'late_cancel' ? 'warning' : 'muted';
+  return <Pill label={t(`attendance.${status}`)} tone={tone} />;
 }
 
-const styles = StyleSheet.create({
-  // Bottom padding clears the tab bar and the circle straddling it.
+const useStyles = makeStyles(({ colors, type }) => ({
+  // Bottom padding clears the tab bar and the circle above it.
   scroll: { padding: space.lg, paddingTop: space.xl, paddingBottom: 176 },
-
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarGlyph: { ...typography.title, color: colors.onAccent },
-
-  progressOnAccent: {
-    height: 8,
-    borderRadius: radius.pill,
-    backgroundColor: 'rgba(18,18,18,0.18)',
-    overflow: 'hidden',
-  },
-  progressOnAccentFill: { height: '100%', borderRadius: radius.pill, backgroundColor: colors.onAccent },
-
-  time: { ...typography.heading, color: colors.inkMuted, minWidth: 48 },
-  name: { ...typography.title, color: colors.ink, flexShrink: 1 },
+  time: { ...type.heading, color: colors.inkMuted, minWidth: 48 },
+  name: { ...type.title, color: colors.ink, flexShrink: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   gridItem: { flexGrow: 1, flexBasis: '45%' },
-});
+}));

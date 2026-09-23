@@ -26,12 +26,16 @@ import {
   Row, Screen, Spacer, Title,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
-import { money, shortDate } from '@/ui/format';
-import { colors, space } from '@/ui/theme';
+import { useT, type I18n } from '@/i18n';
+import { space } from '@/ui/theme';
+import { useTheme } from '@/ui/theming';
 
 export default function DashboardScreen() {
   const { api, account, sync, syncNow, revision } = useApp();
   const router = useRouter();
+  const i18n = useT();
+  const { t, amount, money, date } = i18n;
+  const { colors } = useTheme();
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,8 +88,8 @@ export default function DashboardScreen() {
       >
         <Row style={{ justifyContent: 'space-between' }}>
           <View>
-            <Title>Practice</Title>
-            <Caption>{new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</Caption>
+            <Title>{t('practice.title')}</Title>
+            <Caption>{date(new Date(), 'month')}</Caption>
           </View>
           <SyncBadge />
         </Row>
@@ -97,26 +101,26 @@ export default function DashboardScreen() {
             {/* Earned, not collected. Selling a pack is a liability, not income. */}
             <Card tone="accent">
               <Metric
-                value={money(summary.income_this_month.minor, currency).replace(` ${currency}`, '')}
+                value={amount(summary.income_this_month.minor, currency)}
                 unit={currency}
-                label="earned this month"
+                label={t('practice.earnedThisMonth')}
                 tone="onAccent"
               />
               <Spacer size={space.sm} />
-              <Caption tone="onAccent">Revenue recognised as sessions were delivered.</Caption>
+              <Caption tone="onAccent">{t('practice.earnedExplainer')}</Caption>
             </Card>
 
             <Spacer />
 
             <Row style={{ gap: space.md, alignItems: 'stretch' }}>
               <Card style={{ flex: 1 }}>
-                <Metric value={String(summary.sessions_today)} label="today" />
+                <Metric value={i18n.number(summary.sessions_today)} label={t('practice.today')} />
                 {summary.sessions_today_unmarked > 0 ? (
-                  <Caption tone="warning">{summary.sessions_today_unmarked} still to mark</Caption>
+                  <Caption tone="warning">{t('practice.stillToMark', { count: summary.sessions_today_unmarked })}</Caption>
                 ) : null}
               </Card>
               <Card style={{ flex: 1 }}>
-                <Metric value={String(summary.sessions_left_this_week)} label="left this week" />
+                <Metric value={i18n.number(summary.sessions_left_this_week)} label={t('practice.leftThisWeek')} />
               </Card>
             </Row>
 
@@ -125,7 +129,7 @@ export default function DashboardScreen() {
             <Pressable accessibilityRole="button" onPress={() => router.push('/money')}>
               <Card>
                 <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                  <Metric value={String(summary.unpaid_invoices)} label="unpaid invoices" />
+                  <Metric value={i18n.number(summary.unpaid_invoices)} label={t('practice.unpaidInvoices')} />
                   <Body muted>{money(summary.outstanding.minor, currency)}</Body>
                 </Row>
               </Card>
@@ -136,34 +140,31 @@ export default function DashboardScreen() {
           // ledger arithmetic and simply do not exist without the server, so
           // the screen says that once and gets on with the part that works.
           <Card tone="raised">
-            <Heading>{loading ? 'Loading the numbers…' : 'Numbers need a connection'}</Heading>
+            <Heading>{loading ? t('practice.loadingNumbers') : t('practice.needConnection')}</Heading>
             <Spacer size={space.xs} />
-            <Body muted>
-              Earnings, receivables and the week&apos;s bookings are worked out from the
-              ledger on the server. The renewal list below is this device&apos;s own copy
-              and is always here.
-            </Body>
+            <Body muted>{t('practice.needConnectionBody')}</Body>
           </Card>
         )}
 
         <Spacer size={space.xl} />
         <Row style={{ justifyContent: 'space-between' }}>
-          <Label>Needs renewing</Label>
-          <Caption>{threshold} credits or fewer</Caption>
+          <Label>{t('practice.needsRenewing')}</Label>
+          <Caption>{t('practice.threshold', { count: threshold })}</Caption>
         </Row>
         <Spacer />
 
         {renewals.length === 0 ? (
           <Empty
-            title="Nobody to chase"
-            detail="Everyone has credits left. This is where renewals appear."
+            icon="clients"
+            title={t('practice.nobodyToChase')}
+            detail={t('practice.nobodyToChaseBody')}
           />
         ) : (
           renewals.map((client) => (
             <Pressable
               key={client.id}
               accessibilityRole="button"
-              accessibilityLabel={`${client.fullName}, ${client.creditsRemaining} credits`}
+              accessibilityLabel={t('practice.creditsA11y', { name: client.fullName, count: client.creditsRemaining })}
               onPress={() => router.push({ pathname: '/client/[id]', params: { id: client.id } })}
               style={{ marginBottom: space.sm }}
             >
@@ -173,11 +174,11 @@ export default function DashboardScreen() {
                     <Heading>{client.fullName}</Heading>
                     <Spacer size={space.xs} />
                     <Caption tone={client.creditsRemaining < 0 ? 'danger' : 'muted'}>
-                      {describe(client)}
+                      {describe(client, i18n)}
                     </Caption>
                   </View>
                   <Chip
-                    label={String(client.creditsRemaining)}
+                    label={i18n.number(client.creditsRemaining)}
                     tone={client.creditsRemaining > 0 ? 'accent' : 'danger'}
                   />
                 </Row>
@@ -196,13 +197,13 @@ export default function DashboardScreen() {
  * "One session left" and "hasn't been since April" are both zero-ish balances
  * and completely different conversations, so the line says which.
  */
-function describe(client: LowBalanceClient): string {
+function describe(client: LowBalanceClient, { t, date }: I18n): string {
   const parts: string[] = [];
-  if (client.creditsRemaining < 0) parts.push('overdrawn');
-  else if (client.creditsRemaining === 0) parts.push('out of credits');
-  else parts.push(`${client.creditsRemaining} session${client.creditsRemaining === 1 ? '' : 's'} left`);
+  if (client.creditsRemaining < 0) parts.push(t('practice.overdrawn'));
+  else if (client.creditsRemaining === 0) parts.push(t('practice.outOfCredits'));
+  else parts.push(t('practice.sessionsLeft', { count: client.creditsRemaining }));
 
-  if (client.nextExpiry) parts.push(`expires ${shortDate(client.nextExpiry)}`);
-  if (client.lastSessionOn) parts.push(`last trained ${shortDate(client.lastSessionOn)}`);
+  if (client.nextExpiry) parts.push(t('practice.expires', { date: date(client.nextExpiry, 'short') }));
+  if (client.lastSessionOn) parts.push(t('practice.lastTrained', { date: date(client.lastSessionOn, 'short') }));
   return parts.join(' · ');
 }

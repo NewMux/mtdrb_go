@@ -72,7 +72,7 @@ interface AppContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (input: {
     email: string; password: string; display_name: string;
-    business_name?: string; currency?: string;
+    business_name?: string; currency?: string; timezone?: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
   syncNow: () => Promise<SyncReport | null>;
@@ -239,7 +239,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = useCallback(async (input: {
     email: string; password: string; display_name: string;
-    business_name?: string; currency?: string;
+    business_name?: string; currency?: string; timezone?: string;
   }) => {
     const session = await api.signup(input);
     await persistAccount(session.account);
