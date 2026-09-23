@@ -39,10 +39,19 @@ func Authenticate(issuer *TokenIssuer) func(http.Handler) http.Handler {
 			}
 
 			principal := tenancy.Principal{
-				TenantID:  claims.TenantID,
-				SubjectID: subjectID,
-				Kind:      claims.Subject,
-				Role:      claims.Role,
+				TenantID:   claims.TenantID,
+				SubjectID:  subjectID,
+				Kind:       claims.Subject,
+				Role:       claims.Role,
+				Plan:       claims.Plan,
+				PlanStatus: claims.PlanStatus,
+			}
+			if claims.FamilyID != nil {
+				principal.FamilyID = *claims.FamilyID
+			}
+			if claims.TrialEndsAt != nil {
+				ends := claims.TrialEndsAt.Time
+				principal.TrialEndsAt = &ends
 			}
 
 			ctx := tenancy.WithPrincipal(r.Context(), principal)

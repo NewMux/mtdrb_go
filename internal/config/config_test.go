@@ -72,7 +72,7 @@ func TestProductionHardening(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected production checks to fail")
 	}
-	for _, want := range []string{"STORAGE_USE_SSL", "PUBLIC_BASE_URL", "CORS_ORIGINS"} {
+	for _, want := range []string{"STORAGE_USE_SSL", "PUBLIC_BASE_URL", "CORS_ORIGINS", "APP_URL", "SMTP_HOST"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %s check: %v", want, err)
 		}
@@ -85,6 +85,8 @@ func TestProductionAcceptsHardenedValues(t *testing.T) {
 	t.Setenv("STORAGE_USE_SSL", "true")
 	t.Setenv("PUBLIC_BASE_URL", "https://app.coachpulse.io")
 	t.Setenv("CORS_ORIGINS", "https://app.coachpulse.io, https://admin.coachpulse.io")
+	t.Setenv("APP_URL", "https://app.coachpulse.io")
+	t.Setenv("SMTP_HOST", "smtp.example.com")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)

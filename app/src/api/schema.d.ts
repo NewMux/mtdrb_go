@@ -140,7 +140,14 @@ export interface paths {
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    /**
+                     * @description `cookie` puts the refresh token in an httpOnly, SameSite=Strict
+                     *     cookie instead of the body, for the web build — a browser has nowhere
+                     *     safe to keep one. Refresh and logout then read it from the cookie.
+                     */
+                    "X-Refresh-Transport"?: components["parameters"]["RefreshTransport"];
+                };
                 path?: never;
                 cookie?: never;
             };
@@ -168,13 +175,20 @@ export interface paths {
                  * @description Wrong password and unknown account are deliberately
                  *     indistinguishable, so this endpoint cannot be used to discover
                  *     which emails are registered.
+                 *
+                 *     With two-step sign-in on, a right password answers
+                 *     `mfa_required` with `meta.mfa_token`: exchange it, with the code
+                 *     from the authenticator app, at `/v1/auth/mfa`.
                  */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ErrorEnvelope"];
+                    };
                 };
+                429: components["responses"]["TooManyRequests"];
             };
         };
         delete?: never;
@@ -198,18 +212,28 @@ export interface paths {
          *     Presenting one that has already been rotated means two parties hold
          *     it, so the entire family is revoked and the response is
          *     `refresh_token_reused`.
+         *
+         *     The web build sends an empty body and `X-Refresh-Transport: cookie`;
+         *     the token comes from its httpOnly cookie instead.
          */
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    /**
+                     * @description `cookie` puts the refresh token in an httpOnly, SameSite=Strict
+                     *     cookie instead of the body, for the web build — a browser has nowhere
+                     *     safe to keep one. Refresh and logout then read it from the cookie.
+                     */
+                    "X-Refresh-Transport"?: components["parameters"]["RefreshTransport"];
+                };
                 path?: never;
                 cookie?: never;
             };
             requestBody: {
                 content: {
                     "application/json": {
-                        refresh_token: string;
+                        refresh_token?: string;
                     };
                 };
             };
@@ -308,6 +332,710 @@ export interface paths {
                     };
                     content?: never;
                 };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/mfa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish a two-step sign-in
+         * @description The code is either the current one from the authenticator app or one of the single-use recovery codes. A code already used is refused even inside its thirty seconds.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /**
+                     * @description `cookie` puts the refresh token in an httpOnly, SameSite=Strict
+                     *     cookie instead of the body, for the web build — a browser has nowhere
+                     *     safe to keep one. Refresh and logout then read it from the cookie.
+                     */
+                    "X-Refresh-Transport"?: components["parameters"]["RefreshTransport"];
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description From the login's `mfa_required` meta */
+                        mfa_token: string;
+                        /**
+                         * @example 492039
+                         * @example 7KQ2M-X9PDA
+                         */
+                        code: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Signed in */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Session"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                429: components["responses"]["TooManyRequests"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/password/forgot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Email a password-reset link
+         * @description Accepted whether or not the address has an account, so the endpoint cannot be used to find out who does. The link works once, for an hour.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: email */
+                        email: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Sent if the address is registered */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                429: components["responses"]["TooManyRequests"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/password/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set a new password from a reset link
+         * @description Signs out every device, since whoever asked for the reset may not be the only one who knew the old password.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        token: string;
+                        password: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Password changed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A weak password, or `reset_link_invalid` for a link that has expired or been used. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorEnvelope"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in trainer */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Profile */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Profile"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change name or email
+         * @description Changing the email needs the current password — it is where a reset link would go.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        display_name?: string;
+                        /** Format: email */
+                        email?: string;
+                        /** Format: password */
+                        current_password?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Profile"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        trace?: never;
+    };
+    "/v1/session/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change the password
+         * @description Signs out every other device; this one stays signed in.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: password */
+                        current_password: string;
+                        new_password: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Changed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session/mfa/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start two-step sign-in
+         * @description Generates a secret for an authenticator app. Not in force until confirmed with a code at `/enable`, so a botched scan cannot lock anyone out.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The secret */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MFASetup"];
+                    };
+                };
+                409: components["responses"]["Conflict"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session/mfa/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turn two-step sign-in on
+         * @description The recovery codes in the answer are shown this once and stored only as hashes.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        code: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description On */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            recovery_codes?: string[];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session/mfa/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turn two-step sign-in off
+         * @description Takes the password, not a code — the trainer who lost their phone is the one who needs this.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: password */
+                        password: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Off */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Signed-in devices */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Most recently used first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            devices?: components["schemas"]["Device"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session/devices/{deviceID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Sign a device out */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    deviceID: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Signed out */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session/devices/sign-out-others": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign out every other device */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Signed out */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The practice's settings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Settings"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change settings
+         * @description Owner only. Fields left out are left alone.
+         *
+         *     Setting `country` also sets `week_start` to that country's (Sunday in
+         *     Saudi Arabia, Monday in the UAE) unless the same change names one.
+         *     `currency` answers `409 currency_locked` once money has been recorded.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SettingsPatch"];
+                };
+            };
+            responses: {
+                /** @description The settings as they now stand */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Settings"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        trace?: never;
+    };
+    "/v1/subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The plan, its limits and what is used of them */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Subscription"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/subscription/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop at the end of the paid period
+         * @description Owner only. Nothing changes until the period ends.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Subscription"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/subscription/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Undo a cancellation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Subscription"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
             };
         };
         delete?: never;
@@ -3611,6 +4339,130 @@ export interface components {
                 expires_at?: string;
                 /** @example Bearer */
                 token_type?: string;
+                /**
+                 * Format: date-time
+                 * @description When this device is signed out if unused — the practice's session timeout from now.
+                 */
+                refresh_expires_at?: string;
+            };
+        };
+        Profile: {
+            /** Format: uuid */
+            user_id?: string;
+            email?: string;
+            display_name?: string;
+            role?: string;
+            mfa_enabled?: boolean;
+            /** Format: date-time */
+            password_changed_at?: string | null;
+        };
+        Device: {
+            /** Format: uuid */
+            id?: string;
+            user_agent?: string;
+            /** Format: date-time */
+            signed_in_at?: string;
+            /** Format: date-time */
+            last_seen_at?: string;
+            /** @description The device asking */
+            current?: boolean;
+        };
+        MFASetup: {
+            /** @description Base32 */
+            secret?: string;
+            /** @description For a QR code or a tap on the phone itself */
+            otpauth_uri?: string;
+        };
+        /** @description Weekday ("0" = Sunday … "6") to "HH:MM" intervals. A day absent is a day off. */
+        WorkingHours: {
+            [key: string]: string[][];
+        };
+        Targets: {
+            /** Format: int64 */
+            monthly_revenue_minor?: number;
+            weekly_sessions?: number;
+            active_clients?: number;
+        };
+        Automations: {
+            renewal_due?: boolean;
+            overdue_invoice?: boolean;
+            inactive_client?: boolean;
+            programme_ending?: boolean;
+            inactive_after_days?: number;
+        };
+        Settings: {
+            business_name?: string;
+            currency?: string;
+            /** @description True once money has been recorded */
+            currency_locked?: boolean;
+            /** @example Asia/Dubai */
+            timezone?: string;
+            /** @example AE */
+            country?: string | null;
+            /** @enum {string} */
+            language?: "en" | "ar";
+            /** @enum {string} */
+            document_language?: "en" | "ar" | "bilingual";
+            /** @enum {string} */
+            digits?: "latn" | "arab";
+            week_start?: number;
+            working_hours?: components["schemas"]["WorkingHours"];
+            targets?: components["schemas"]["Targets"];
+            automations?: components["schemas"]["Automations"];
+            session_timeout_days?: number;
+            buffer_minutes?: number;
+            allow_overdraft?: boolean;
+            no_show_is_billable?: boolean;
+            low_balance_threshold?: number;
+        };
+        SettingsPatch: {
+            business_name?: string;
+            currency?: string;
+            timezone?: string;
+            country?: string;
+            /** @enum {string} */
+            language?: "en" | "ar";
+            /** @enum {string} */
+            document_language?: "en" | "ar" | "bilingual";
+            /** @enum {string} */
+            digits?: "latn" | "arab";
+            week_start?: number;
+            working_hours?: components["schemas"]["WorkingHours"];
+            targets?: components["schemas"]["Targets"];
+            automations?: components["schemas"]["Automations"];
+            session_timeout_days?: number;
+            buffer_minutes?: number;
+            allow_overdraft?: boolean;
+            no_show_is_billable?: boolean;
+            low_balance_threshold?: number;
+        };
+        Subscription: {
+            /** @enum {string} */
+            plan?: "trial" | "starter" | "pro";
+            /**
+             * @description Whose entitlements apply — Pro during a trial.
+             * @enum {string}
+             */
+            effective_plan?: "starter" | "pro";
+            /** @enum {string} */
+            status?: "active" | "past_due" | "cancelled";
+            /** Format: date-time */
+            trial_ends_at?: string | null;
+            trial_days_left?: number | null;
+            /** Format: date */
+            renews_on?: string | null;
+            cancel_at_period_end?: boolean;
+            /** @description Read-only until renewed */
+            lapsed?: boolean;
+            features?: ("shop" | "analytics" | "insights" | "automations")[];
+            /** @description Caps by resource; a resource absent here is unlimited. */
+            limits?: {
+                active_clients?: number;
+                locations?: number;
+            };
+            usage?: {
+                active_clients?: number;
+                locations?: number;
             };
         };
         SignupRequest: {
@@ -4338,6 +5190,41 @@ export interface components {
         };
     };
     responses: {
+        /**
+         * @description Not allowed. `feature_not_in_plan` (meta: `feature`, `plan`) and
+         *     `plan_limit_reached` (meta: `limit`, `max`, `plan`) are the ones the
+         *     app answers with an upgrade prompt.
+         */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /**
+         * @description `subscription_inactive`: the trial or plan has lapsed and the account
+         *     is read-only until it is renewed. The app's outbox keeps its
+         *     operations waiting rather than marking them refused.
+         */
+        PaymentRequired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description `rate_limited`: too many attempts; wait and try again. */
+        TooManyRequests: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
         /** @description Malformed or failed validation */
         BadRequest: {
             headers: {
@@ -4388,6 +5275,12 @@ export interface components {
         };
     };
     parameters: {
+        /**
+         * @description `cookie` puts the refresh token in an httpOnly, SameSite=Strict
+         *     cookie instead of the body, for the web build — a browser has nowhere
+         *     safe to keep one. Refresh and logout then read it from the cookie.
+         */
+        RefreshTransport: "cookie";
         /**
          * @description Makes a mutating request safe to retry, which is what lets the offline
          *     outbox retry aggressively. A replay returns the stored response

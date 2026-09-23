@@ -47,6 +47,9 @@ export function SyncBadge() {
 }
 
 function describe(sync: SyncState, { t }: I18n, colors: Palette): { label: string; tone: string } {
+  // Before anything else: nothing will send until the plan is renewed, and
+  // "3 waiting" would read as a network problem.
+  if (sync.inactive) return { label: t('sync.readOnly'), tone: colors.danger };
   if (sync.failed > 0) return { label: t('sync.needsAttention', { count: sync.failed }), tone: colors.danger };
   if (sync.running) return { label: t('sync.syncing'), tone: colors.accentInk };
   if (sync.offline) {

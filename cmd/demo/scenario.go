@@ -121,6 +121,35 @@ func runScenario(ctx context.Context, c *apiClient) (*Recording, error) {
 	}
 	c.token = session.Tokens.AccessToken
 
+	// Sam also signed in on the studio laptop, so the devices list has more
+	// than the phone the demo is "held" on.
+	c.userAgent = macChrome
+	if err := c.do(ctx, "POST", "/v1/auth/login", map[string]any{
+		"email": "sam@riverastrength.example", "password": "demo-practice-password",
+	}, nil); err != nil {
+		return nil, fmt.Errorf("second device: %w", err)
+	}
+	c.userAgent = iPhoneSafari
+
+	// A Dubai week: six mornings and five evenings, Saturday mornings at the
+	// beach, Sunday off.
+	evening := [][]string{{"06:00", "12:00"}, {"16:00", "21:00"}}
+	if err := c.do(ctx, "PATCH", "/v1/settings", map[string]any{
+		"country": "AE",
+		"working_hours": map[string]any{
+			"1": evening, "2": evening, "3": evening, "4": evening, "5": evening,
+			"6": [][]string{{"07:00", "12:00"}},
+		},
+		"targets": map[string]any{
+			"monthly_revenue_minor": 3000000, "weekly_sessions": 24, "active_clients": 14,
+		},
+		"automations": map[string]any{
+			"renewal_due": true, "overdue_invoice": true, "inactive_client": true, "programme_ending": false,
+		},
+	}, nil); err != nil {
+		return nil, fmt.Errorf("settings: %w", err)
+	}
+
 	if err := c.do(ctx, "POST", "/v1/payment-methods", map[string]any{
 		"kind": "bank_transfer", "label": "Emirates NBD", "is_default": true,
 		"details": map[string]any{
@@ -452,12 +481,19 @@ func (c *apiClient) record(ctx context.Context, account json.RawMessage) (*Recor
 	}
 	// The reads the app makes. Each slice that adds a server-computed screen
 	// adds its path here and re-records.
-	for _, path := range []string{"/v1/dashboard", "/v1/receivables"} {
+	for _, path := range []string{
+		"/v1/dashboard", "/v1/receivables",
+		"/v1/settings", "/v1/subscription", "/v1/session/profile", "/v1/session/devices",
+	} {
 		var raw json.RawMessage
 		if err := c.do(ctx, "GET", path, nil, &raw); err != nil {
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		rec.Reads[path] = raw
+		fixed, err := restampRead(raw, c.wallStart, wallEnd)
+		if err != nil {
+			return nil, fmt.Errorf("restamp %s: %w", path, err)
+		}
+		rec.Reads[path] = fixed
 	}
 	return rec, nil
 }
@@ -468,9 +504,15 @@ type idOnly struct {
 	ID string `json:"id"`
 }
 
+const (
+	iPhoneSafari = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+	macChrome    = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+)
+
 type apiClient struct {
-	base  string
-	token string
+	base      string
+	token     string
+	userAgent string
 	// wallStart is when the run began on the real clock; see restamp.
 	wallStart time.Time
 }
@@ -516,6 +558,9 @@ func (c *apiClient) do(ctx context.Context, method, path string, body, out any) 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -604,4 +649,38 @@ func restamp(raw json.RawMessage, wallFrom, wallTo time.Time) (json.RawMessage, 
 		return raw, nil
 	}
 	return json.Marshal(row)
+}
+
+// restampRead does for a read what restamp does for a row, at any depth: a
+// read has no business date of its own, so a database stamp inside the run's
+// window becomes the recording's "now" — the devices list says Sam signed in
+// this morning, not on the day the file was recorded.
+func restampRead(raw json.RawMessage, wallFrom, wallTo time.Time) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	stamp := recordedAt.UTC().Format(time.RFC3339Nano)
+	var walk func(v any) any
+	walk = func(v any) any {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, inner := range x {
+				x[k] = walk(inner)
+			}
+		case []any:
+			for i, inner := range x {
+				x[i] = walk(inner)
+			}
+		case string:
+			if t, err := time.Parse(time.RFC3339Nano, x); err == nil &&
+				!t.Before(wallFrom.Add(-time.Minute)) && !t.After(wallTo.Add(time.Minute)) {
+				return stamp
+			}
+		}
+		return v
+	}
+	return json.Marshal(walk(value))
 }

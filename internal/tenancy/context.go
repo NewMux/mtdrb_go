@@ -8,6 +8,7 @@ package tenancy
 
 import (
 	"context"
+	"time"
 
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
@@ -36,6 +37,16 @@ type Principal struct {
 	SubjectID ids.ID
 	Kind      Kind
 	Role      string
+	// FamilyID is the refresh-token family the access token was minted
+	// from: which signed-in device this is, so "sign out every other device"
+	// knows which one to keep. Nil on portal tokens.
+	FamilyID ids.ID
+	// The tenant's plan as of the token's minting. Raw on purpose: package
+	// subscription interprets them, and depends on this package rather than
+	// the other way round.
+	Plan        string
+	PlanStatus  string
+	TrialEndsAt *time.Time
 }
 
 // IsTrainer reports whether the caller is trainer-side staff.

@@ -11,6 +11,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
+	"github.com/NewMux/mtdrb_go/internal/subscription"
 )
 
 // ChartSeeder installs a tenant's opening chart of accounts.
@@ -39,6 +40,8 @@ type Service struct {
 	library LibrarySeeder
 	clock   clock.Clock
 	params  Argon2Params
+
+	security Security
 }
 
 // NewService builds the authentication service.
@@ -55,6 +58,9 @@ type Tokens struct {
 	RefreshToken string    `json:"refresh_token"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	TokenType    string    `json:"token_type"`
+	// RefreshExpiresAt is when this device is signed out if it is not used:
+	// the tenant's session timeout from now.
+	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
 }
 
 // Account identifies the signed-in trainer and their tenant.
@@ -137,8 +143,9 @@ func (s *Service) Signup(ctx context.Context, in SignupInput, userAgent string) 
 	// the same policies as every later request rather than around them.
 	err = s.pool.InTenantTx(ctx, account.TenantID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO tenants (id, name, default_currency, timezone) VALUES ($1, $2, $3, $4)`,
-			account.TenantID, businessName, currency, timezone,
+			`INSERT INTO tenants (id, name, default_currency, timezone, plan, trial_ends_at)
+			 VALUES ($1, $2, $3, $4, 'trial', $5)`,
+			account.TenantID, businessName, currency, timezone, s.clock.Now().Add(subscription.TrialLength),
 		); err != nil {
 			return errs.Internal(err, "create tenant")
 		}
@@ -216,6 +223,25 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 	}
 	if !ok || deactivated != nil {
 		return Account{}, Tokens{}, invalid
+	}
+
+	// A right password is half a sign-in when there is a second factor. The
+	// answer carries a challenge the code is exchanged against, rather than
+	// the password being sent again with it.
+	var mfa bool
+	if err := s.pool.InTenantTx(ctx, account.TenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT totp_enabled_at IS NOT NULL FROM users WHERE id = $1`,
+			account.UserID).Scan(&mfa)
+	}); err != nil {
+		return Account{}, Tokens{}, errs.Internal(err, "read two-step status")
+	}
+	if mfa {
+		challenge, err := s.issuer.IssueMFAChallenge(account.TenantID, account.UserID)
+		if err != nil {
+			return Account{}, Tokens{}, err
+		}
+		return Account{}, Tokens{}, errs.Unauthorized(errs.CodeMFARequired,
+			"enter the code from your authenticator app").WithMeta("mfa_token", challenge)
 	}
 
 	var tokens Tokens
@@ -352,12 +378,24 @@ func (s *Service) revokeFamily(ctx context.Context, tenantID, familyID ids.ID) e
 }
 
 // issueTokens mints an access/refresh pair inside an existing transaction.
+//
+// The access token carries the tenant's plan as it stands now, and the
+// refresh token lives as long as the tenant's session timeout says.
 func (s *Service) issueTokens(ctx context.Context, tx pgx.Tx, a Account, family ids.ID, userAgent string) (Tokens, error) {
-	access, err := s.issuer.IssueUserAccess(a.TenantID, a.UserID, a.Role)
+	var (
+		plan        PlanClaims
+		timeoutDays int
+	)
+	if err := tx.QueryRow(ctx,
+		`SELECT plan, plan_status, trial_ends_at, session_timeout_days FROM tenants WHERE id = $1`, a.TenantID,
+	).Scan(&plan.Plan, &plan.Status, &plan.TrialEndsAt, &timeoutDays); err != nil {
+		return Tokens{}, errs.Internal(err, "read plan")
+	}
+	refresh, err := s.issuer.NewRefreshToken(family, time.Duration(timeoutDays)*24*time.Hour)
 	if err != nil {
 		return Tokens{}, err
 	}
-	refresh, err := s.issuer.NewRefreshToken(family)
+	access, err := s.issuer.IssueUserAccess(a.TenantID, a.UserID, a.Role, refresh.FamilyID, plan)
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -369,10 +407,11 @@ func (s *Service) issueTokens(ctx context.Context, tx pgx.Tx, a Account, family 
 		return Tokens{}, errs.Internal(err, "store refresh token")
 	}
 	return Tokens{
-		AccessToken:  access,
-		RefreshToken: refresh.Plaintext,
-		ExpiresAt:    s.clock.Now().Add(s.issuer.AccessTTL()),
-		TokenType:    "Bearer",
+		AccessToken:      access,
+		RefreshToken:     refresh.Plaintext,
+		ExpiresAt:        s.clock.Now().Add(s.issuer.AccessTTL()),
+		TokenType:        "Bearer",
+		RefreshExpiresAt: refresh.ExpiresAt,
 	}, nil
 }
 

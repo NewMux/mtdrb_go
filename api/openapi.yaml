@@ -46,6 +46,15 @@ tags:
   - name: Programming
   - name: Public
     description: The unauthenticated shared-invoice link.
+  - name: Settings
+    description: How the practice runs. Mirrored to devices as the `settings`
+      collection; changed by the owner.
+  - name: Subscription
+    description: |
+      Plan state. A trial is fourteen days of everything. A lapsed account is
+      read-only rather than locked: every GET keeps working, and writes —
+      sync push included, refused whole — answer `402 subscription_inactive`
+      until the plan is renewed.
 
 security:
   - bearerAuth: []
@@ -96,6 +105,8 @@ paths:
       tags: [Authentication]
       summary: Sign in
       security: []
+      parameters:
+        - $ref: "#/components/parameters/RefreshTransport"
       requestBody:
         required: true
         content:
@@ -118,6 +129,14 @@ paths:
             indistinguishable, so this endpoint cannot be used to discover
             which emails are registered.
 
+            With two-step sign-in on, a right password answers
+            `mfa_required` with `meta.mfa_token`: exchange it, with the code
+            from the authenticator app, at `/v1/auth/mfa`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   /v1/auth/refresh:
     post:
       tags: [Authentication]
@@ -127,14 +146,18 @@ paths:
         Presenting one that has already been rotated means two parties hold
         it, so the entire family is revoked and the response is
         `refresh_token_reused`.
+
+        The web build sends an empty body and `X-Refresh-Transport: cookie`;
+        the token comes from its httpOnly cookie instead.
       security: []
+      parameters:
+        - $ref: "#/components/parameters/RefreshTransport"
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [refresh_token]
               properties:
                 refresh_token: { type: string }
       responses:
@@ -176,6 +199,302 @@ paths:
                 refresh_token: { type: string }
       responses:
         "204": { description: Signed out }
+
+  /v1/auth/mfa:
+    post:
+      tags: [Authentication]
+      summary: Finish a two-step sign-in
+      description: The code is either the current one from the authenticator
+        app or one of the single-use recovery codes. A code already used is
+        refused even inside its thirty seconds.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/RefreshTransport"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_token, code]
+              properties:
+                mfa_token: { type: string, description: From the login's `mfa_required` meta }
+                code: { type: string, examples: ["492039", "7KQ2M-X9PDA"] }
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/auth/password/forgot:
+    post:
+      tags: [Authentication]
+      summary: Email a password-reset link
+      description: Accepted whether or not the address has an account, so the
+        endpoint cannot be used to find out who does. The link works once,
+        for an hour.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202": { description: Sent if the address is registered }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/auth/password/reset:
+    post:
+      tags: [Authentication]
+      summary: Set a new password from a reset link
+      description: Signs out every device, since whoever asked for the reset
+        may not be the only one who knew the old password.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 12 }
+      responses:
+        "204": { description: Password changed }
+        "400":
+          description: A weak password, or `reset_link_invalid` for a link
+            that has expired or been used.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /v1/session/profile:
+    get:
+      tags: [Authentication]
+      summary: The signed-in trainer
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+    patch:
+      tags: [Authentication]
+      summary: Change name or email
+      description: Changing the email needs the current password — it is where
+        a reset link would go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                email: { type: string, format: email }
+                current_password: { type: string, format: password }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/session/password:
+    post:
+      tags: [Authentication]
+      summary: Change the password
+      description: Signs out every other device; this one stays signed in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, format: password }
+                new_password: { type: string, minLength: 12 }
+      responses:
+        "204": { description: Changed }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/session/mfa/setup:
+    post:
+      tags: [Authentication]
+      summary: Start two-step sign-in
+      description: Generates a secret for an authenticator app. Not in force
+        until confirmed with a code at `/enable`, so a botched scan cannot
+        lock anyone out.
+      responses:
+        "200":
+          description: The secret
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MFASetup" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/session/mfa/enable:
+    post:
+      tags: [Authentication]
+      summary: Turn two-step sign-in on
+      description: The recovery codes in the answer are shown this once and
+        stored only as hashes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: On
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recovery_codes:
+                    type: array
+                    items: { type: string, examples: ["7KQ2M-X9PDA"] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/session/mfa/disable:
+    post:
+      tags: [Authentication]
+      summary: Turn two-step sign-in off
+      description: Takes the password, not a code — the trainer who lost their
+        phone is the one who needs this.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password }
+      responses:
+        "204": { description: Off }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/session/devices:
+    get:
+      tags: [Authentication]
+      summary: Signed-in devices
+      responses:
+        "200":
+          description: Most recently used first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: "#/components/schemas/Device" }
+
+  /v1/session/devices/{deviceID}:
+    parameters:
+      - { name: deviceID, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Authentication]
+      summary: Sign a device out
+      responses:
+        "204": { description: Signed out }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/session/devices/sign-out-others:
+    post:
+      tags: [Authentication]
+      summary: Sign out every other device
+      responses:
+        "204": { description: Signed out }
+
+  /v1/settings:
+    get:
+      tags: [Settings]
+      summary: The practice's settings
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+    patch:
+      tags: [Settings]
+      summary: Change settings
+      description: |
+        Owner only. Fields left out are left alone.
+
+        Setting `country` also sets `week_start` to that country's (Sunday in
+        Saudi Arabia, Monday in the UAE) unless the same change names one.
+        `currency` answers `409 currency_locked` once money has been recorded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsPatch" }
+      responses:
+        "200":
+          description: The settings as they now stand
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/subscription:
+    get:
+      tags: [Subscription]
+      summary: The plan, its limits and what is used of them
+      responses:
+        "200":
+          description: Plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+
+  /v1/subscription/cancel:
+    post:
+      tags: [Subscription]
+      summary: Stop at the end of the paid period
+      description: Owner only. Nothing changes until the period ends.
+      responses:
+        "200":
+          description: Plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/subscription/resume:
+    post:
+      tags: [Subscription]
+      summary: Undo a cancellation
+      responses:
+        "200":
+          description: Plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/sync/pull:
     get:
@@ -1719,6 +2038,14 @@ components:
       bearerFormat: JWT
 
   parameters:
+    RefreshTransport:
+      name: X-Refresh-Transport
+      in: header
+      schema: { type: string, enum: [cookie] }
+      description: |
+        `cookie` puts the refresh token in an httpOnly, SameSite=Strict
+        cookie instead of the body, for the web build — a browser has nowhere
+        safe to keep one. Refresh and logout then read it from the cookie.
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -1730,6 +2057,27 @@ components:
         *different* body is refused with `idempotency_key_reused`.
 
   responses:
+    Forbidden:
+      description: |
+        Not allowed. `feature_not_in_plan` (meta: `feature`, `plan`) and
+        `plan_limit_reached` (meta: `limit`, `max`, `plan`) are the ones the
+        app answers with an upgrade prompt.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    PaymentRequired:
+      description: |
+        `subscription_inactive`: the trial or plan has lapsed and the account
+        is read-only until it is renewed. The app's outbox keeps its
+        operations waiting rather than marking them refused.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    TooManyRequests:
+      description: "`rate_limited`: too many attempts; wait and try again."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     BadRequest:
       description: Malformed or failed validation
       content:
@@ -1807,6 +2155,134 @@ components:
             refresh_token: { type: string }
             expires_at: { type: string, format: date-time }
             token_type: { type: string, examples: [Bearer] }
+            refresh_expires_at:
+              type: string
+              format: date-time
+              description: When this device is signed out if unused — the
+                practice's session timeout from now.
+
+    Profile:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        email: { type: string }
+        display_name: { type: string }
+        role: { type: string }
+        mfa_enabled: { type: boolean }
+        password_changed_at: { type: [string, "null"], format: date-time }
+
+    Device:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_agent: { type: string }
+        signed_in_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        current: { type: boolean, description: The device asking }
+
+    MFASetup:
+      type: object
+      properties:
+        secret: { type: string, description: Base32, for typing in by hand }
+        otpauth_uri: { type: string, description: For a QR code or a tap on the phone itself }
+
+    WorkingHours:
+      type: object
+      description: Weekday ("0" = Sunday … "6") to "HH:MM" intervals. A day
+        absent is a day off.
+      additionalProperties:
+        type: array
+        items:
+          type: array
+          items: { type: string, examples: ["06:00"] }
+          minItems: 2
+          maxItems: 2
+
+    Targets:
+      type: object
+      properties:
+        monthly_revenue_minor: { type: integer, format: int64 }
+        weekly_sessions: { type: integer }
+        active_clients: { type: integer }
+
+    Automations:
+      type: object
+      properties:
+        renewal_due: { type: boolean }
+        overdue_invoice: { type: boolean }
+        inactive_client: { type: boolean }
+        programme_ending: { type: boolean }
+        inactive_after_days: { type: integer }
+
+    Settings:
+      type: object
+      properties:
+        business_name: { type: string }
+        currency: { type: string }
+        currency_locked: { type: boolean, description: True once money has been recorded }
+        timezone: { type: string, examples: [Asia/Dubai] }
+        country: { type: [string, "null"], examples: [AE] }
+        language: { type: string, enum: [en, ar] }
+        document_language: { type: string, enum: [en, ar, bilingual] }
+        digits: { type: string, enum: [latn, arab] }
+        week_start: { type: integer, minimum: 0, maximum: 6 }
+        working_hours: { $ref: "#/components/schemas/WorkingHours" }
+        targets: { $ref: "#/components/schemas/Targets" }
+        automations: { $ref: "#/components/schemas/Automations" }
+        session_timeout_days: { type: integer }
+        buffer_minutes: { type: integer }
+        allow_overdraft: { type: boolean }
+        no_show_is_billable: { type: boolean }
+        low_balance_threshold: { type: integer }
+
+    SettingsPatch:
+      type: object
+      properties:
+        business_name: { type: string }
+        currency: { type: string }
+        timezone: { type: string }
+        country: { type: string }
+        language: { type: string, enum: [en, ar] }
+        document_language: { type: string, enum: [en, ar, bilingual] }
+        digits: { type: string, enum: [latn, arab] }
+        week_start: { type: integer, minimum: 0, maximum: 6 }
+        working_hours: { $ref: "#/components/schemas/WorkingHours" }
+        targets: { $ref: "#/components/schemas/Targets" }
+        automations: { $ref: "#/components/schemas/Automations" }
+        session_timeout_days: { type: integer, minimum: 1, maximum: 365 }
+        buffer_minutes: { type: integer, minimum: 0, maximum: 240 }
+        allow_overdraft: { type: boolean }
+        no_show_is_billable: { type: boolean }
+        low_balance_threshold: { type: integer, minimum: 0, maximum: 100 }
+
+    Subscription:
+      type: object
+      properties:
+        plan: { type: string, enum: [trial, starter, pro] }
+        effective_plan:
+          type: string
+          enum: [starter, pro]
+          description: Whose entitlements apply — Pro during a trial.
+        status: { type: string, enum: [active, past_due, cancelled] }
+        trial_ends_at: { type: [string, "null"], format: date-time }
+        trial_days_left: { type: [integer, "null"] }
+        renews_on: { type: [string, "null"], format: date }
+        cancel_at_period_end: { type: boolean }
+        lapsed: { type: boolean, description: Read-only until renewed }
+        features:
+          type: array
+          items: { type: string, enum: [shop, analytics, insights, automations] }
+        limits:
+          type: object
+          description: Caps by resource; a resource absent here is unlimited.
+          properties:
+            active_clients: { type: integer }
+            locations: { type: integer }
+        usage:
+          type: object
+          properties:
+            active_clients: { type: integer }
+            locations: { type: integer }
 
     SignupRequest:
       type: object

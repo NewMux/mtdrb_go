@@ -29,6 +29,14 @@ const (
 
 const issuer = "coachpulse"
 
+// mfaIssuer signs the short-lived proof that a password was right, which a
+// second factor then exchanges for a session. A different issuer, so that
+// ParseAccess refuses it: half a login must not open the API.
+const mfaIssuer = "coachpulse-mfa"
+
+// mfaChallengeTTL is how long a trainer has to type the code from their phone.
+const mfaChallengeTTL = 5 * time.Minute
+
 // Claims is the access-token payload.
 type Claims struct {
 	jwt.RegisteredClaims
@@ -38,6 +46,21 @@ type Claims struct {
 	// training client, which RLS then enforces via current_client_id().
 	ClientID *ids.ID `json:"cid,omitempty"`
 	Role     string  `json:"role,omitempty"`
+	// FamilyID is the refresh-token family this access token was minted
+	// from — which device is asking.
+	FamilyID *ids.ID `json:"fam,omitempty"`
+	// The tenant's plan when the token was minted, so route guards need no
+	// query. A change applies at the next refresh.
+	Plan        string           `json:"plan,omitempty"`
+	PlanStatus  string           `json:"pst,omitempty"`
+	TrialEndsAt *jwt.NumericDate `json:"tre,omitempty"`
+}
+
+// PlanClaims is the plan state an access token carries.
+type PlanClaims struct {
+	Plan        string
+	Status      string
+	TrialEndsAt *time.Time
 }
 
 // TokenIssuer mints and verifies access tokens.
@@ -63,14 +86,62 @@ func (t *TokenIssuer) AccessTTL() time.Duration { return t.accessTTL }
 // RefreshTTL reports the refresh-token lifetime.
 func (t *TokenIssuer) RefreshTTL() time.Duration { return t.refreshTTL }
 
-// IssueUserAccess mints an access token for a trainer.
-func (t *TokenIssuer) IssueUserAccess(tenantID, userID ids.ID, role string) (string, error) {
-	return t.sign(Claims{
+// IssueUserAccess mints an access token for a trainer on one device.
+func (t *TokenIssuer) IssueUserAccess(tenantID, userID ids.ID, role string, family ids.ID, plan PlanClaims) (string, error) {
+	c := Claims{
 		RegisteredClaims: t.registered(userID.String()),
 		TenantID:         tenantID,
 		Subject:          SubjectUser,
 		Role:             role,
+		Plan:             plan.Plan,
+		PlanStatus:       plan.Status,
+	}
+	if family != ids.Nil {
+		c.FamilyID = &family
+	}
+	if plan.TrialEndsAt != nil {
+		c.TrialEndsAt = jwt.NewNumericDate(*plan.TrialEndsAt)
+	}
+	return t.sign(c)
+}
+
+// IssueMFAChallenge mints the token a login with a correct password returns
+// when the account has a second factor.
+func (t *TokenIssuer) IssueMFAChallenge(tenantID, userID ids.ID) (string, error) {
+	now := t.clock.Now()
+	return t.sign(Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    mfaIssuer,
+			Subject:   userID.String(),
+			ID:        ids.New().String(),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(mfaChallengeTTL)),
+		},
+		TenantID: tenantID,
+		Subject:  SubjectUser,
 	})
+}
+
+// ParseMFAChallenge verifies a challenge and returns whose it is.
+func (t *TokenIssuer) ParseMFAChallenge(raw string) (tenantID, userID ids.ID, err error) {
+	invalid := errs.Unauthorized(errs.CodeInvalidCredentials, "the sign-in has expired; enter your password again")
+	claims := &Claims{}
+	_, err = jwt.ParseWithClaims(raw, claims, func(tok *jwt.Token) (any, error) {
+		return t.key, nil
+	},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(mfaIssuer),
+		jwt.WithTimeFunc(t.clock.Now),
+	)
+	if err != nil || claims.TenantID == ids.Nil {
+		return ids.Nil, ids.Nil, invalid
+	}
+	userID, err = ids.Parse(claims.RegisteredClaims.Subject)
+	if err != nil {
+		return ids.Nil, ids.Nil, invalid
+	}
+	return claims.TenantID, userID, nil
 }
 
 // IssueClientAccess mints a portal access token scoped to one training client.
@@ -170,7 +241,12 @@ const refreshTokenBytes = 32
 // NewRefreshToken mints a refresh token in the given family. Passing ids.Nil
 // starts a new family, which is what login does; rotation passes the existing
 // family so theft of any generation can revoke the whole chain.
-func (t *TokenIssuer) NewRefreshToken(family ids.ID) (RefreshToken, error) {
+//
+// ttl is the tenant's own session timeout; zero means the issuer's default.
+func (t *TokenIssuer) NewRefreshToken(family ids.ID, ttl time.Duration) (RefreshToken, error) {
+	if ttl <= 0 {
+		ttl = t.refreshTTL
+	}
 	buf := make([]byte, refreshTokenBytes)
 	if _, err := rand.Read(buf); err != nil {
 		return RefreshToken{}, errs.Internal(err, "generate refresh token")
@@ -183,7 +259,7 @@ func (t *TokenIssuer) NewRefreshToken(family ids.ID) (RefreshToken, error) {
 		Plaintext: plaintext,
 		Hash:      HashRefreshToken(plaintext),
 		FamilyID:  family,
-		ExpiresAt: t.clock.Now().Add(t.refreshTTL),
+		ExpiresAt: t.clock.Now().Add(ttl),
 	}, nil
 }
 

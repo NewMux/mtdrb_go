@@ -20,6 +20,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
+	"github.com/NewMux/mtdrb_go/internal/mail"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/testsupport"
 )
@@ -45,13 +46,27 @@ type harness struct {
 	t      *testing.T
 }
 
+// harnessOptions are what a journey needs to control: the time, and where
+// mail goes.
+type harnessOptions struct {
+	clock  clock.Clock
+	mailer mail.Sender
+}
+
 func newHarness(t *testing.T) *harness {
+	return newHarnessWith(t, harnessOptions{})
+}
+
+func newHarnessWith(t *testing.T, o harnessOptions) *harness {
 	t.Helper()
 	testsupport.RequireDB(t)
 	testsupport.Reset(t)
 
 	pool := testsupport.OpenApp(t)
-	wall := clock.System{}
+	var wall clock.Clock = clock.System{}
+	if o.clock != nil {
+		wall = o.clock
+	}
 
 	cfg := config.Config{
 		Env:             "development",
@@ -79,6 +94,8 @@ func newHarness(t *testing.T) *harness {
 		Presigner:       &fakePresigner{},
 		PresignTTL:      cfg.PresignTTL,
 		PublicBaseURL:   cfg.PublicBaseURL,
+		Mailer:          o.mailer,
+		AppURL:          "https://app.coachpulse.test",
 	})
 	srv := api.New(cfg, pool, slog.New(slog.DiscardHandler), services.Handlers())
 

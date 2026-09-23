@@ -12,6 +12,7 @@ import { RefreshControl, ScrollView, View, type StyleProp, type ViewStyle } from
 
 import { Caption, Row, Screen, Spacer, Title } from './components';
 import { useLayout } from './layout';
+import { PlanBanner } from './plan-banner';
 import { SyncBadge } from './sync-badge';
 import { space } from './theme';
 import { useTheme } from './theming';
@@ -52,6 +53,7 @@ export function Page({
     <View style={[{ width: '100%', maxWidth: maxContentWidth, alignSelf: 'center' }, contentStyle]}>
       {header}
       <Spacer size={space.lg} />
+      <PlanBanner />
       {children}
     </View>
   );

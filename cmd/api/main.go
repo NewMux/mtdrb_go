@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/NewMux/mtdrb_go/internal/api"
 	"github.com/NewMux/mtdrb_go/internal/app"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/db"
+	"github.com/NewMux/mtdrb_go/internal/mail"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
@@ -65,6 +67,16 @@ func run() error {
 		return err
 	}
 
+	// Password-reset links go out over SMTP; with no mail server configured
+	// (development only — config refuses it in production) they are logged.
+	var mailer mail.Sender = mail.LogSender{Log: log}
+	if cfg.SMTPHost != "" {
+		mailer = mail.SMTPSender{
+			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
+			Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.MailFrom,
+		}
+	}
+
 	services := app.New(app.Options{
 		Pool:            pool,
 		Clock:           clock.System{},
@@ -75,6 +87,10 @@ func run() error {
 		Presigner:       presigner,
 		PresignTTL:      cfg.PresignTTL,
 		PublicBaseURL:   cfg.PublicBaseURL,
+		Mailer:          mailer,
+		AppURL:          cfg.AppURL,
+		SecureCookies:   cfg.IsProduction() || strings.HasPrefix(cfg.PublicBaseURL, "https://"),
+		TrustProxy:      cfg.TrustProxy,
 	})
 	srv := api.New(cfg, pool, log, services.Handlers())
 

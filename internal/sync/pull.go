@@ -42,6 +42,15 @@ type collection struct {
 // which bumps server_seq, so the client sees the row again and drops it
 // locally. That is why no separate tombstone table exists.
 var collections = []collection{
+	// The practice's own row: what the device needs to draw the week, bound
+	// a booking and know whether it may send. Targets and automations stay on
+	// the server; nothing offline reads them.
+	{"settings", "tenants", `id, name AS business_name, default_currency AS currency, timezone,
+		country, language, document_language, digits, week_start, working_hours,
+		session_timeout_days, buffer_minutes, allow_overdraft, no_show_is_billable,
+		low_balance_threshold, plan, plan_status, trial_ends_at, plan_renews_on,
+		cancel_at_period_end, updated_at`},
+
 	{"clients", "clients", `id, full_name, email, phone, date_of_birth, status::text AS status,
 		emergency_contact_name, emergency_contact_phone, allow_overdraft,
 		default_rate_minor, notes, created_at, updated_at, deleted_at`},

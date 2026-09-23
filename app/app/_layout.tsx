@@ -36,7 +36,10 @@ function AuthGate() {
   useEffect(() => {
     if (!ready) return;
     const onSignIn = segments[0] === 'sign-in';
-    if (!account && !onSignIn) router.replace('/sign-in');
+    // A reset link is opened by someone who cannot sign in; it is the one
+    // other screen reachable without an account.
+    const onReset = segments[0] === 'reset-password';
+    if (!account && !onSignIn && !onReset) router.replace('/sign-in');
     else if (account && onSignIn) router.replace('/');
   }, [ready, account, segments, router]);
 
@@ -97,6 +100,7 @@ function Shell() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="dashboard" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+        <Stack.Screen name="reset-password" options={{ headerShown: false }} />
         <Stack.Screen name="+not-found" options={{ headerShown: false }} />
         <Stack.Screen name="workout/[id]" options={{ title: t('workout.fallbackTitle') }} />
         <Stack.Screen name="sell-package" options={{ title: t('sellPackage.title'), presentation: 'modal' }} />

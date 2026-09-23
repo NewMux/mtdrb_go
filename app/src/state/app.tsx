@@ -18,7 +18,7 @@ import { ApiClient, NetworkError } from '@/api/client';
 import type { Account } from '@/api/types';
 import { openDatabase } from '@/db';
 import { getMeta, setMeta, type Database } from '@/db/types';
-import { secureTokens } from '@/auth/tokens';
+import { isWeb, secureTokens } from '@/auth/tokens';
 import { synchronise, type SyncReport } from '@/sync/engine';
 import * as outbox from '@/sync/outbox';
 
@@ -65,6 +65,8 @@ export interface SyncState {
   pending: number;
   failed: number;
   error: string | null;
+  /** The plan has lapsed: everything queued waits for a renewal. */
+  inactive: boolean;
 }
 
 interface AppContextValue {
@@ -88,12 +90,17 @@ interface AppContextValue {
   revision: number;
   /** Tells open screens their data changed. */
   touch: () => void;
+  /** Throws an ApiError `mfa_required` when a second factor is needed. */
   signIn: (email: string, password: string) => Promise<void>;
+  /** Finishes a sign-in that stopped for a code. */
+  completeMfa: (mfaToken: string, code: string) => Promise<void>;
   signUp: (input: {
     email: string; password: string; display_name: string;
     business_name?: string; currency?: string; timezone?: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Keeps the stored account in step after a profile change. */
+  updateAccount: (patch: Partial<Account>) => Promise<void>;
   syncNow: () => Promise<SyncReport | null>;
 }
 
@@ -126,6 +133,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [revision, setRevision] = useState(0);
   const [sync, setSync] = useState<SyncState>({
     running: false, offline: false, lastSyncAt: null, pending: 0, failed: 0, error: null,
+    inactive: false,
   });
 
   // Held in a ref so the API client, built once, can reach the current setter
@@ -141,6 +149,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         baseUrl: baseUrl(),
         tokens: secureTokens,
         onSignedOut: () => signedOut.current(),
+        cookieTransport: isWeb,
       }),
     [demo],
   );
@@ -219,6 +228,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pending: counts.pending,
       failed: counts.failed,
       error: report.error ?? null,
+      inactive: report.inactive ?? false,
     });
     // Rows arrived, so anything on screen is now stale.
     if (report.pulled > 0 || report.pushed > 0) touch();
@@ -259,6 +269,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persistAccount(session.account);
   }, [api, persistAccount]);
 
+  const completeMfa = useCallback(async (mfaToken: string, code: string) => {
+    const session = await api.verifyMfa(mfaToken, code);
+    await persistAccount(session.account);
+  }, [api, persistAccount]);
+
   const signUp = useCallback(async (input: {
     email: string; password: string; display_name: string;
     business_name?: string; currency?: string; timezone?: string;
@@ -276,15 +291,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * tokens go; the evidence stays.
    */
   const signOut = useCallback(async () => {
-    await secureTokens.clear();
+    // Ending the session on the server matters most on the web, where the
+    // refresh cookie would otherwise sign the next reload straight back in.
+    // Best effort: signing out with no signal still signs this device out.
+    try {
+      await api.logout();
+    } catch {
+      await secureTokens.clear();
+    }
     await persistAccount(null);
-  }, [persistAccount]);
+  }, [api, persistAccount]);
+
+  const updateAccount = useCallback(async (patch: Partial<Account>) => {
+    if (account) await persistAccount({ ...account, ...patch });
+  }, [account, persistAccount]);
 
   signedOut.current = () => { void persistAccount(null); };
 
   const value = useMemo<AppContextValue>(
-    () => ({ db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow }),
-    [db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow],
+    () => ({
+      db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, updateAccount, syncNow,
+    }),
+    [db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, updateAccount, syncNow],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

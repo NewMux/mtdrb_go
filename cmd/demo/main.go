@@ -125,7 +125,7 @@ func run(out string) error {
 	// Reproducible ids, so re-recording shows only what the scenario changed.
 	defer ids.UseSequence(recordedAt.AddDate(0, 0, -90), 1)()
 
-	client := &apiClient{base: server.URL}
+	client := &apiClient{base: server.URL, userAgent: iPhoneSafari}
 	recording, err := runScenario(ctx, client)
 	if err != nil {
 		return err

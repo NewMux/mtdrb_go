@@ -43,6 +43,20 @@ type Config struct {
 
 	PublicBaseURL string // origin used to build invoice share links
 	CORSOrigins   []string
+	// AppURL is where the app itself is served: the origin of the link in a
+	// password-reset email.
+	AppURL string
+	// TrustProxy believes X-Forwarded-For when rate limiting sign-in. Only
+	// behind a load balancer that sets it.
+	TrustProxy bool
+
+	// SMTP sends password-reset emails. With no host, mail is logged instead,
+	// which is only allowed outside production.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	MailFrom     string
 
 	LogLevel  string
 	LogFormat string
@@ -82,6 +96,14 @@ func Load() (Config, error) {
 
 		PublicBaseURL: l.str("PUBLIC_BASE_URL", "http://localhost:8080"),
 		CORSOrigins:   l.list("CORS_ORIGINS", "http://localhost:8081"),
+		AppURL:        l.str("APP_URL", "http://localhost:8081"),
+		TrustProxy:    l.boolean("TRUST_PROXY", false),
+
+		SMTPHost:     l.str("SMTP_HOST", ""),
+		SMTPPort:     l.num("SMTP_PORT", 587),
+		SMTPUsername: l.str("SMTP_USERNAME", ""),
+		SMTPPassword: l.str("SMTP_PASSWORD", ""),
+		MailFrom:     l.str("MAIL_FROM", "CoachPulse <no-reply@coachpulse.io>"),
 
 		LogLevel:  l.str("LOG_LEVEL", "info"),
 		LogFormat: l.str("LOG_FORMAT", "json"),
@@ -104,6 +126,12 @@ func Load() (Config, error) {
 		}
 		if strings.HasPrefix(cfg.PublicBaseURL, "http://") {
 			l.fail("PUBLIC_BASE_URL must be https in production")
+		}
+		if strings.HasPrefix(cfg.AppURL, "http://") {
+			l.fail("APP_URL must be https in production")
+		}
+		if cfg.SMTPHost == "" {
+			l.fail("SMTP_HOST is required in production: password resets must be delivered, not logged")
 		}
 		for _, o := range cfg.CORSOrigins {
 			if o == "*" {

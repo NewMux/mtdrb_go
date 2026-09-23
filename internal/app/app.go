@@ -17,10 +17,13 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
+	"github.com/NewMux/mtdrb_go/internal/mail"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
+	"github.com/NewMux/mtdrb_go/internal/settings"
+	"github.com/NewMux/mtdrb_go/internal/subscription"
 	"github.com/NewMux/mtdrb_go/internal/sync"
 )
 
@@ -45,6 +48,15 @@ type Options struct {
 
 	// PublicBaseURL prefixes share links.
 	PublicBaseURL string
+
+	// Mailer sends password-reset links; nil drops them. AppURL is where
+	// those links point.
+	Mailer mail.Sender
+	AppURL string
+	// SecureCookies and TrustProxy are the auth transport's environment
+	// switches; see auth.HandlerOptions.
+	SecureCookies bool
+	TrustProxy    bool
 }
 
 // Services is every domain service, built once.
@@ -64,6 +76,7 @@ type Services struct {
 	Dashboard   *dashboard.Service
 
 	publicBaseURL string
+	authOptions   auth.HandlerOptions
 }
 
 // New builds the service graph.
@@ -77,7 +90,10 @@ func New(o Options) *Services {
 		argon = auth.DefaultArgon2Params()
 	}
 
-	s := &Services{Pool: o.Pool, Clock: wall, publicBaseURL: o.PublicBaseURL}
+	s := &Services{
+		Pool: o.Pool, Clock: wall, publicBaseURL: o.PublicBaseURL,
+		authOptions: auth.HandlerOptions{SecureCookies: o.SecureCookies, TrustProxy: o.TrustProxy},
+	}
 	s.Issuer = auth.NewTokenIssuer(o.JWTSigningKey, o.AccessTokenTTL, o.RefreshTokenTTL, wall)
 
 	// Signup provisions the tenant's chart of accounts and exercise library
@@ -85,7 +101,8 @@ func New(o Options) *Services {
 	// post is not a usable one.
 	s.Ledger = ledger.NewService(wall)
 	s.Programming = programming.NewService(wall)
-	s.Auth = auth.NewService(o.Pool, s.Issuer, s.Ledger, s.Programming, wall, argon)
+	s.Auth = auth.NewService(o.Pool, s.Issuer, s.Ledger, s.Programming, wall, argon).
+		WithSecurity(auth.Security{ColumnKey: o.ColumnKey, Mailer: o.Mailer, AppURL: o.AppURL})
 
 	s.CRM = crm.NewService(wall, o.ColumnKey)
 	if o.Presigner != nil {
@@ -102,11 +119,14 @@ func New(o Options) *Services {
 func (s *Services) Handlers() api.Deps {
 	pool := s.Pool
 	deps := api.Deps{
-		Auth:        auth.NewHandler(s.Auth),
-		CRM:         crm.NewHandler(s.CRM, pool),
-		Scheduling:  scheduling.NewHandler(s.Scheduling, s.Billing, pool),
-		Billing:     billing.NewHandler(s.Billing, pool, s.publicBaseURL),
-		Programming: programming.NewHandler(s.Programming, pool),
+		Auth:         auth.NewHandler(s.Auth, s.authOptions),
+		Settings:     settings.NewHandler(pool),
+		Subscription: subscription.NewHandler(pool, s.Clock),
+		Clock:        s.Clock,
+		CRM:          crm.NewHandler(s.CRM, pool),
+		Scheduling:   scheduling.NewHandler(s.Scheduling, s.Billing, pool),
+		Billing:      billing.NewHandler(s.Billing, pool, s.publicBaseURL),
+		Programming:  programming.NewHandler(s.Programming, pool),
 		Sync: sync.NewHandler(s.Sync, pool, sync.Dependencies{
 			CRM:         s.CRM,
 			Scheduling:  s.Scheduling,

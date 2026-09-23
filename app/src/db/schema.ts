@@ -29,6 +29,7 @@ export const SYNC_TABLES = [
   'program_assignments',
   'workout_sessions',
   'set_logs',
+  'settings',
 ] as const;
 
 export type SyncTable = (typeof SYNC_TABLES)[number];
@@ -211,7 +212,26 @@ export interface SchemaUpgrade {
 }
 
 /** Every step after version 1, in order. Append only. */
-export const UPGRADES: SchemaUpgrade[] = [];
+export const UPGRADES: SchemaUpgrade[] = [
+  {
+    // The practice's own row: the week the calendar draws, the hours a
+    // booking must fit, and the plan state that decides whether the outbox
+    // may send. One row, keyed by the tenant id.
+    version: 2,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS settings (
+         id TEXT PRIMARY KEY NOT NULL,
+         business_name TEXT, currency TEXT, timezone TEXT, country TEXT,
+         language TEXT, document_language TEXT, digits TEXT,
+         week_start INTEGER, working_hours TEXT,
+         session_timeout_days INTEGER, buffer_minutes INTEGER,
+         allow_overdraft INTEGER, no_show_is_billable INTEGER, low_balance_threshold INTEGER,
+         plan TEXT, plan_status TEXT, trial_ends_at TEXT, plan_renews_on TEXT,
+         cancel_at_period_end INTEGER, updated_at TEXT
+       )`,
+    ],
+  },
+];
 
 /** The version a device is at once every upgrade has run. */
 export const SCHEMA_VERSION = UPGRADES.reduce((v, u) => Math.max(v, u.version), 1);

@@ -13,7 +13,7 @@
 
 import React from 'react';
 import {
-  ActivityIndicator, Pressable, Text, TextInput, View,
+  ActivityIndicator, Platform, Pressable, Switch, Text, TextInput, View,
   type KeyboardTypeOptions, type StyleProp, type TextStyle, type ViewStyle,
 } from 'react-native';
 
@@ -630,6 +630,67 @@ export function StatCard({
  * Hiding it would leave a Starter trainer not knowing the feature exists;
  * showing it greyed with one sentence of why is how a plan sells itself.
  */
+/** An on/off setting, with the words beside the switch rather than on it. */
+export function Toggle({
+  label, value, onChange, hint, disabled,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+  hint?: string;
+  disabled?: boolean;
+}) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  return (
+    <Row style={{ justifyContent: 'space-between', gap: space.lg }}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.body}>{label}</Text>
+        {hint ? <><Spacer size={space.xs} /><Caption>{hint}</Caption></> : null}
+      </View>
+      <Switch
+        accessibilityLabel={label}
+        value={value}
+        onValueChange={onChange}
+        disabled={disabled}
+        trackColor={{ false: colors.surfaceRaised, true: colors.accent }}
+        thumbColor={value ? colors.onAccent : colors.inkMuted}
+        {...(Platform.OS === 'web' ? { activeThumbColor: colors.onAccent } : {})}
+      />
+    </Row>
+  );
+}
+
+/** A row that opens somewhere: a settings section, a device, a document. */
+export function NavRow({
+  icon, title, detail, onPress, trailing,
+}: {
+  icon?: IconName;
+  title: string;
+  detail?: string;
+  onPress: () => void;
+  trailing?: React.ReactNode;
+}) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={detail ? `${title}. ${detail}` : title}
+      onPress={onPress}
+      style={({ pressed }) => [styles.navRow, pressed && styles.pressed]}
+    >
+      {icon ? <Icon name={icon} size={20} color={colors.inkMuted} /> : null}
+      <View style={{ flex: 1 }}>
+        <Text style={styles.heading}>{title}</Text>
+        {detail ? <Text style={styles.caption}>{detail}</Text> : null}
+      </View>
+      {trailing}
+      <Icon name="next" size={18} color={colors.inkMuted} />
+    </Pressable>
+  );
+}
+
 export function UpgradePrompt({
   title, detail, actionLabel, onPress,
 }: { title: string; detail: string; actionLabel: string; onPress?: () => void }) {
@@ -652,6 +713,16 @@ export function UpgradePrompt({
 
 const useStyles = makeStyles(({ colors, type }) => ({
   screen: { flex: 1, backgroundColor: colors.bg },
+  navRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    minHeight: TOUCH_TARGET,
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+  },
   card: { borderRadius: radius.lg, padding: space.lg },
   cardDefault: { backgroundColor: colors.surface },
   cardRaised: { backgroundColor: colors.surfaceRaised },

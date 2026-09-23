@@ -36,6 +36,39 @@ only feature that needs it — nothing in the walkthrough below does.
 
 </details>
 
+### Email, plans and the admin tool
+
+**Password-reset email.** With no `SMTP_HOST` set, the API writes each email
+to its log instead of sending it — the reset link is right there in the
+terminal running `make run`. Production refuses to start without SMTP. The
+link points at `APP_URL` (default `http://localhost:8081`, the Expo web dev
+server).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SMTP_HOST`, `SMTP_PORT` | —, 587 | Mail server; STARTTLS when offered |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | — | Authentication, if the server wants it |
+| `MAIL_FROM` | `CoachPulse <no-reply@coachpulse.io>` | Sender |
+| `APP_URL` | `http://localhost:8081` | Where reset links point; https in production |
+| `TRUST_PROXY` | `false` | Take the caller's address from `X-Forwarded-For` when rate-limiting sign-in. Only behind a load balancer that sets it |
+
+**Plans.** Every new practice starts a fourteen-day trial of everything. When
+it lapses the account is read-only: every read keeps working, and writes
+(sync included) answer `402 subscription_inactive` until the plan changes.
+There is no payment provider yet; plans are changed with `cmd/admin`, which
+connects as the database owner:
+
+```bash
+export OWNER_DATABASE_URL=postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
+go run ./cmd/admin list-tenants
+go run ./cmd/admin set-plan <tenant-id> pro -renews-on 2026-12-31
+go run ./cmd/admin set-plan <tenant-id> starter      # 25 active clients, 1 location
+go run ./cmd/admin extend-trial <tenant-id> 7
+```
+
+A change reaches the trainer's devices at their next token refresh (within
+fifteen minutes) and their next sync.
+
 ## 2. The app
 
 ```bash

@@ -5,6 +5,7 @@ package sync_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -853,6 +854,10 @@ func TestSyncIsTenantIsolated(t *testing.T) {
 			return err
 		}
 		for _, c := range result.Changes {
+			// A tenant's own settings row is the one thing it should see.
+			if c.Collection == "settings" && len(c.Rows) == 1 && strings.Contains(string(c.Rows[0]), other.String()) {
+				continue
+			}
 			if len(c.Rows) > 0 {
 				t.Errorf("another tenant pulled %d rows from %s", len(c.Rows), c.Collection)
 			}

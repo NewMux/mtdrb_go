@@ -10,23 +10,23 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { ScrollView, View } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import * as outbox from '@/sync/outbox';
 import type { OutboxEntry } from '@/sync/outbox';
 import { ErrorCode } from '@/api/types';
 import { useT, type I18n } from '@/i18n';
 import { DEMO, useApp } from '@/state/app';
-import { usePreferences } from '@/state/preferences';
 import {
-  Banner, Body, Button, Caption, Card, Empty, Heading, Label, Row, Screen, SegmentedChoice, Spacer, Title,
+  Banner, Body, Button, Caption, Card, Empty, Heading, NavRow, Row, Screen, Spacer, Title,
 } from '@/ui/components';
 import { space } from '@/ui/theme';
 
 export default function SyncScreen() {
-  const { db, sync, syncNow, signOut, touch, account } = useApp();
+  const { db, sync, syncNow, touch } = useApp();
+  const router = useRouter();
   const i18n = useT();
   const { t, time } = i18n;
-  const preferences = usePreferences();
   const [failed, setFailed] = useState<OutboxEntry[]>([]);
 
   const load = useCallback(async () => {
@@ -110,7 +110,9 @@ export default function SyncScreen() {
               <Body>{describeOperation(entry, i18n)}</Body>
               <Spacer size={space.xs} />
               <Caption tone="danger">
-                {entry.error_message ?? t('syncScreen.serverRefused')}
+                {entry.error_code === 'plan_limit_reached'
+                  ? t('plan.limitReachedGeneric')
+                  : entry.error_message ?? t('syncScreen.serverRefused')}
               </Caption>
               <Spacer size={space.sm} />
               <Row>
@@ -122,54 +124,14 @@ export default function SyncScreen() {
         )}
 
         <Spacer size={space.xl} />
-        <Heading>{t('syncScreen.preferences')}</Heading>
-        <Spacer size={space.sm} />
-        <Card>
-          <Label>{t('syncScreen.language')}</Label>
-          <Spacer size={space.sm} />
-          <SegmentedChoice
-            options={[{ value: 'en', label: t('prefs.english') }, { value: 'ar', label: t('prefs.arabic') }] as const}
-            value={preferences.locale}
-            onChange={preferences.setLocale}
-          />
-          {preferences.restartPending ? (
-            <>
-              <Spacer size={space.sm} />
-              <Banner
-                tone="muted"
-                message={t('prefs.restartBody')}
-                action={{ label: t('prefs.restart'), onPress: preferences.restart }}
-              />
-            </>
-          ) : null}
-          <Spacer />
-          <Label>{t('syncScreen.digits')}</Label>
-          <Spacer size={space.sm} />
-          <SegmentedChoice
-            options={[{ value: 'latn', label: t('prefs.latin') }, { value: 'arab', label: t('prefs.arabicIndic') }] as const}
-            value={preferences.prefs.digits}
-            onChange={preferences.setDigits}
-          />
-          <Spacer />
-          <Label>{t('syncScreen.theme')}</Label>
-          <Spacer size={space.sm} />
-          <SegmentedChoice
-            options={[
-              { value: 'system', label: t('prefs.system') },
-              { value: 'light', label: t('prefs.light') },
-              { value: 'dark', label: t('prefs.dark') },
-            ] as const}
-            value={preferences.prefs.theme}
-            onChange={preferences.setTheme}
-          />
-        </Card>
-
-        <Spacer size={space.xxl} />
-        <Caption>{account?.email ?? ''}</Caption>
-        <Spacer size={space.sm} />
-        <Button label={t('syncScreen.signOut')} icon="signOut" tone="quiet" onPress={() => { void signOut(); }} />
-        <Spacer size={space.xs} />
-        <Caption>{t('syncScreen.signOutNote')}</Caption>
+        {/* Language, appearance and signing out live in Settings now; the
+            link stays here because this is where people used to find them. */}
+        <NavRow
+          icon="settings"
+          title={t('settings.title')}
+          detail={t('settings.generalDetail')}
+          onPress={() => { router.back(); router.push('/dashboard/settings'); }}
+        />
       </ScrollView>
     </Screen>
   );

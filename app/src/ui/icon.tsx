@@ -13,10 +13,10 @@
 import React from 'react';
 import {
   Activity, ArrowLeft, ArrowRight, Building2, CalendarDays, CalendarPlus, ChartColumn, Check,
-  ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clock, CloudOff, Copy,
+  ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clock, CloudOff, Copy, KeyRound, Laptop,
   CreditCard, Crown, Download, Dumbbell, Ellipsis, FileText, Languages, LayoutDashboard,
   ListChecks, Lock, LogOut, Mail, MapPin, Menu, Minus, Moon, Package, Pencil, Percent, Phone,
-  Plus, Receipt, RefreshCw, ScanBarcode, Search, Settings, Share2, ShoppingBag, SlidersHorizontal,
+  Plus, Receipt, RefreshCw, ScanBarcode, Search, Settings, Share2, ShieldCheck, ShoppingBag, SlidersHorizontal, Smartphone,
   Sparkles, Sun, Target, Trash2, TrendingDown, TrendingUp, TriangleAlert, Upload, User, Users,
   Wallet, X, type LucideIcon,
 } from 'lucide-react-native';
@@ -82,6 +82,10 @@ const ICONS = {
   business: Building2,
   target: Target,
   activity: Activity,
+  security: ShieldCheck,
+  phoneDevice: Smartphone,
+  laptop: Laptop,
+  key: KeyRound,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;
