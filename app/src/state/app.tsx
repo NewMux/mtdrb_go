@@ -18,6 +18,7 @@ import { ApiClient, NetworkError } from '@/api/client';
 import type { Account } from '@/api/types';
 import { openDatabase } from '@/db';
 import { getMeta, setMeta, type Database } from '@/db/types';
+import { forgetPractice } from '@/db/forget';
 import { isWeb, secureTokens } from '@/auth/tokens';
 import { synchronise, type SyncReport } from '@/sync/engine';
 import * as outbox from '@/sync/outbox';
@@ -99,6 +100,11 @@ interface AppContextValue {
     business_name?: string; currency?: string; timezone?: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
+  /**
+   * Deletes the account on the server, then everything of it on this device.
+   * Resolves with when the practice is removed for good (for an owner).
+   */
+  deleteAccount: (password: string) => Promise<{ scope: 'practice' | 'user'; purge_after?: string }>;
   /** Keeps the stored account in step after a profile change. */
   updateAccount: (patch: Partial<Account>) => Promise<void>;
   syncNow: () => Promise<SyncReport | null>;
@@ -117,7 +123,7 @@ const AppContext = createContext<AppContextValue | null>(null);
  * EXPO_PUBLIC_ is Expo's own convention: it is inlined at build time, so this
  * works in a release build too.
  */
-function baseUrl(): string {
+export function baseUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_API_URL;
   if (fromEnv) return fromEnv.replace(/\/+$/, '');
 
@@ -302,6 +308,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persistAccount(null);
   }, [api, persistAccount]);
 
+  const deleteAccount = useCallback(async (password: string) => {
+    const result = await api.post<{ scope: 'practice' | 'user'; purge_after?: string }>(
+      '/v1/session/delete-account', { password });
+    // The server has revoked every session; what remains is this device.
+    await secureTokens.clear();
+    if (db) await forgetPractice(db);
+    await persistAccount(null);
+    return result;
+  }, [api, db, persistAccount]);
+
   const updateAccount = useCallback(async (patch: Partial<Account>) => {
     if (account) await persistAccount({ ...account, ...patch });
   }, [account, persistAccount]);
@@ -310,9 +326,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AppContextValue>(
     () => ({
-      db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, updateAccount, syncNow,
+      db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, deleteAccount, updateAccount, syncNow,
     }),
-    [db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, updateAccount, syncNow],
+    [db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, deleteAccount, updateAccount, syncNow],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

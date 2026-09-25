@@ -21,7 +21,7 @@ import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useT } from '@/i18n';
 import { Icon, type IconName } from '@/ui/icon';
 import { useLayout } from '@/ui/layout';
-import { NAV_MODULES, PHONE_TABS } from '@/ui/nav';
+import { HIDDEN_MODULES, NAV_MODULES, PHONE_TABS } from '@/ui/nav';
 import { Sidebar } from '@/ui/sidebar';
 import { FAB_SIZE, radius, space } from '@/ui/theme';
 import { makeStyles, useTheme } from '@/ui/theming';
@@ -99,6 +99,10 @@ export default function DashboardLayout() {
             href: phoneTab(module.key) ? undefined : null,
           }}
         />
+      ))}
+      {/* The router registers every screen file as a tab; unbuilt ones stay off the bar. */}
+      {HIDDEN_MODULES.map((module) => (
+        <Tabs.Screen key={module.key} name={module.screen} options={{ href: null }} />
       ))}
       <Tabs.Screen name="more" options={{ title: t('nav.more'), tabBarIcon: tabIcon('more') }} />
     </Tabs>

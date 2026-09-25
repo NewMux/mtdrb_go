@@ -446,6 +446,11 @@ export const en = {
     lastChanged: 'Last changed {date}',
   },
 
+  legal: {
+    privacy: 'Privacy policy',
+    terms: 'Terms of service',
+    agree: 'By creating a practice you agree to the terms of service and privacy policy.',
+  },
   security: {
     twoStepTitle: 'Two-step sign-in',
     twoStepBody: 'After your password, a code from an authenticator app on your phone. Someone who learns your password still cannot get in.',
@@ -470,6 +475,15 @@ export const en = {
     turnOff: 'Turn off two-step sign-in',
     turnOffBody: 'Enter your password to turn it off.',
     password: 'Password',
+    deleteTitle: 'Delete account',
+    deleteOwnerBody: 'Deletes your practice: every client, session, programme, invoice and record in your books, and every file. Everyone is signed out at once and nobody can sign back in. After {days} days it is gone for good. Keep copies of anything you need for your taxes first.',
+    deleteMemberBody: 'Removes your name and email and signs you out everywhere. The practice’s records stay with the practice.',
+    deleteButton: 'Delete my account',
+    deleteConfirmTitle: 'Delete your account?',
+    deleteConfirmOwner: 'Your practice and everything in it will be deleted. This cannot be undone once the {days} days have passed.',
+    deleteConfirmMember: 'You will be signed out and your details removed.',
+    deleteConfirm: 'Delete',
+    deleted: 'Your account has been deleted.',
     devicesTitle: 'Signed-in devices',
     devicesBody: 'Every phone and browser signed in to your account. Sign out any you do not recognise.',
     thisDevice: 'This device',
@@ -719,6 +733,9 @@ export const en = {
 
   shell: {
     comingTitle: 'Arriving in this build',
+    crashTitle: 'Something went wrong on this screen.',
+    crashBody: 'Your work is saved on this device.',
+    crashRetry: 'Try again',
     otherTabTitle: 'CoachPulse is open in another tab',
     otherTabBody: 'A browser lets one tab at a time hold the practice’s local copy. Close the other tab, then reload this one.',
     storageTitle: 'Can’t open storage',

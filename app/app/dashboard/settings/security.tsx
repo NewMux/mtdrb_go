@@ -32,7 +32,10 @@ import { useTheme } from '@/ui/theming';
 export default function SecurityScreen() {
   const i18n = useT();
   const { t } = i18n;
-  const { api } = useApp();
+  const { api, account, deleteAccount } = useApp();
+  const owner = account?.role === 'owner';
+  const [deleting, setDeleting] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
   const toast = useToast();
   const confirm = useConfirm();
   const { colors } = useTheme();
@@ -109,6 +112,24 @@ export default function SecurityScreen() {
     await run(async () => {
       await api.post('/v1/session/devices/sign-out-others', {});
       devices.reload();
+    });
+  };
+
+  // Two steps, like turning two-step off: the password, then a last
+  // question that says plainly what goes.
+  const removeAccount = async () => {
+    const choice = await confirm({
+      title: t('security.deleteConfirmTitle'),
+      message: owner ? t('security.deleteConfirmOwner', { days: PURGE_DAYS }) : t('security.deleteConfirmMember'),
+      actions: [
+        { value: 'cancel', label: t('common.cancel') },
+        { value: 'go', label: t('security.deleteConfirm'), tone: 'danger' },
+      ],
+    });
+    if (choice !== 'go') return;
+    await run(async () => {
+      await deleteAccount(deletePassword);
+      toast(t('security.deleted'), 'success');
     });
   };
 
@@ -233,9 +254,30 @@ export default function SecurityScreen() {
         )}
         {timeout ? <><Spacer size={space.sm} /><Caption>{t('security.timeout', { count: timeout })}</Caption></> : null}
       </Section>
+
+      <Section
+        title={t('security.deleteTitle')}
+        detail={owner ? t('security.deleteOwnerBody', { days: PURGE_DAYS }) : t('security.deleteMemberBody')}
+      >
+        {deleting ? (
+          <>
+            <Field label={t('security.password')} value={deletePassword} onChangeText={setDeletePassword} secure autoCapitalize="none" />
+            <Spacer />
+            <Row style={{ gap: space.sm }}>
+              <Button tone="danger" label={t('security.deleteButton')} onPress={() => { void removeAccount(); }} disabled={deletePassword === ''} busy={busy} />
+              <Button tone="quiet" label={t('common.cancel')} onPress={() => { setDeleting(false); setDeletePassword(''); }} />
+            </Row>
+          </>
+        ) : (
+          <Button tone="danger" label={t('security.deleteButton')} onPress={() => setDeleting(true)} />
+        )}
+      </Section>
     </FormPage>
   );
 }
+
+/** The server's grace period before a deleted practice is purged. */
+const PURGE_DAYS = 30;
 
 /** "JBSW Y3DP EHPK 3PXP": easier to type into a phone from a screen. */
 function groupSecret(secret: string): string {

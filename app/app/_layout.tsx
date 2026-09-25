@@ -14,7 +14,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
 import { isHeldByAnotherTab } from '@/db/errors';
-import { useT } from '@/i18n';
+import { i18nFor, useT } from '@/i18n';
 import { practiceSettings } from '@/features/plan';
 import { AppProvider, useApp, useQuery } from '@/state/app';
 import { PreferencesProvider } from '@/state/preferences';
@@ -118,6 +118,36 @@ function Shell() {
         <Stack.Screen name="sync" options={{ title: t('syncScreen.title'), presentation: 'modal' }} />
       </Stack>
     </>
+  );
+}
+
+/**
+ * The last line of defence: a screen that throws while rendering. Without it
+ * a release build shows a blank white screen and nothing else. It renders
+ * outside the app's providers — one of them may be what failed — so it
+ * carries its own colours and says it in both languages. Nothing is lost:
+ * everything the trainer did is already in the device's database and outbox.
+ */
+export function ErrorBoundary({ error, retry }: { error: Error; retry: () => Promise<void> }) {
+  useEffect(() => { console.error('screen crashed', error); }, [error]);
+  const en = i18nFor('en', 'latn').t;
+  const ar = i18nFor('ar', 'latn').t;
+  const title = { color: '#f2f2f2', fontSize: 20, fontWeight: '600' as const, marginBottom: space.md };
+  return (
+    <View style={{ flex: 1, backgroundColor: '#121212', justifyContent: 'center', padding: space.xl }}>
+      <Text style={title}>{en('shell.crashTitle')}</Text>
+      <Text style={[title, { writingDirection: 'rtl' }]}>{ar('shell.crashTitle')}</Text>
+      <Text style={{ color: '#a0a0a0', fontSize: 15, marginBottom: space.xl }}>
+        {`${en('shell.crashBody')} · ${ar('shell.crashBody')}`}
+      </Text>
+      <Text
+        accessibilityRole="button"
+        onPress={() => { void retry(); }}
+        style={{ color: '#121212', backgroundColor: '#ccff00', alignSelf: 'flex-start', paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: 999, fontWeight: '600', overflow: 'hidden' }}
+      >
+        {`${en('shell.crashRetry')} · ${ar('shell.crashRetry')}`}
+      </Text>
+    </View>
   );
 }
 

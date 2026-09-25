@@ -14,6 +14,7 @@ import { planState, practiceSettings } from '@/features/plan';
 import { useT } from '@/i18n';
 import { useApp, useQuery } from '@/state/app';
 import { Button, Caption, NavRow, Pill, Spacer } from '@/ui/components';
+import { LegalLinks } from '@/ui/legal-links';
 import { useConfirm } from '@/ui/overlay';
 import { Page } from '@/ui/page';
 import { space } from '@/ui/theme';
@@ -67,6 +68,8 @@ export default function SettingsScreen() {
           trailing={planLabel ? <Pill label={plan?.lapsed ? t('sync.readOnly') : planLabel} tone={plan?.lapsed ? 'danger' : 'accent'} /> : null}
           onPress={() => router.push('/dashboard/settings/subscription')}
         />
+        <Spacer size={space.md} />
+        <LegalLinks />
       </View>
 
       <Spacer size={space.xxl} />

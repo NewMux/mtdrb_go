@@ -18,13 +18,15 @@ import {
   Banner, Body, Button, Caption, Card, Divider, Heading, Progress, Row, Spacer, Title, UpgradePrompt,
 } from '@/ui/components';
 import { FormPage, Section } from '@/ui/form-page';
+import { SHOW_UNBUILT } from '@/ui/nav';
 import { Icon } from '@/ui/icon';
 import { useConfirm, useToast } from '@/ui/overlay';
 import { space } from '@/ui/theme';
 import { useTheme } from '@/ui/theming';
 
 const FEATURES = ['shop', 'analytics', 'insights', 'automations'] as const;
-const SALES = 'hello@coachpulse.io';
+// Plans are sold by invoice for now; this is who to write to.
+const SALES = process.env.EXPO_PUBLIC_SUPPORT_EMAIL || 'hello@coachpulse.io';
 
 export default function SubscriptionScreen() {
   const i18n = useT();
@@ -86,7 +88,9 @@ export default function SubscriptionScreen() {
         <Usage label={t('subscription.locations')} used={sub.usage.locations ?? 0} max={sub.limits.locations} i18n={i18n} />
       </Section>
 
-      <Section title={t('subscription.features')}>
+      {/* The plan features are modules not built yet; listing them would sell
+          what does not exist. */}
+      {SHOW_UNBUILT ? <Section title={t('subscription.features')}>
         {FEATURES.map((feature, index) => {
           const included = sub.features.includes(feature);
           return (
@@ -102,7 +106,7 @@ export default function SubscriptionScreen() {
             </View>
           );
         })}
-      </Section>
+      </Section> : null}
 
       <UpgradePrompt
         title={t('subscription.upgradeTitle')}

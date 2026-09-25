@@ -22,6 +22,7 @@ import { useApp } from '@/state/app';
 import {
   Banner, Body, Button, Caption, Field, Screen, Spacer, TextButton, Title,
 } from '@/ui/components';
+import { LegalLinks } from '@/ui/legal-links';
 import { space } from '@/ui/theme';
 
 type Mode = 'sign-in' | 'sign-up' | 'mfa' | 'forgot' | 'forgot-sent';
@@ -223,6 +224,9 @@ export default function SignInScreen() {
                 </>
               ) : null}
 
+              {mode === 'sign-up' ? (
+                <><Spacer /><Caption>{t('legal.agree')}</Caption></>
+              ) : null}
               <Spacer size={space.xl} />
               <Button
                 label={mode === 'sign-in' ? t('signIn.signIn') : t('signIn.createAccount')}
@@ -237,6 +241,8 @@ export default function SignInScreen() {
                 tone="quiet"
                 onPress={() => go(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
               />
+              <Spacer size={space.lg} />
+              <LegalLinks />
             </>
           )}
 
