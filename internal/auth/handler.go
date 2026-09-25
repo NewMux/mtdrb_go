@@ -73,6 +73,7 @@ func (h *Handler) AuthenticatedRoutes() http.Handler {
 	r.Get("/devices", h.devices)
 	r.Delete("/devices/{deviceID}", h.signOutDevice)
 	r.Post("/devices/sign-out-others", h.signOutOthers)
+	r.Post("/delete-account", h.deleteAccount)
 	return r
 }
 
@@ -437,6 +438,23 @@ func (h *Handler) enableMFA(w http.ResponseWriter, r *http.Request) {
 
 type disableRequest struct {
 	Password string `json:"password"`
+}
+
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	var req disableRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	deletion, err := h.svc.DeleteAccount(r.Context(), req.Password)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	// Every session is already revoked; the web build's cookie goes too, or
+	// a reload would try to refresh with it.
+	h.clearRefreshCookie(w)
+	httpx.JSON(w, r, http.StatusOK, deletion)
 }
 
 func (h *Handler) disableMFA(w http.ResponseWriter, r *http.Request) {

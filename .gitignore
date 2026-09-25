@@ -3,6 +3,7 @@
 *.exe
 # `go build ./cmd/migrate` from the root drops these here.
 /api
+!/api/
 /migrate
 /worker
 /admin

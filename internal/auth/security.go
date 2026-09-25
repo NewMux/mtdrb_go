@@ -27,6 +27,9 @@ type Security struct {
 	Mailer mail.Sender
 	// AppURL is where the app is served, for the link in a reset email.
 	AppURL string
+	// PurgeAfter is the grace period before a deleted practice is purged.
+	// Zero means DefaultPurgeAfter.
+	PurgeAfter time.Duration
 }
 
 // WithSecurity equips the service for two-factor, password reset and the

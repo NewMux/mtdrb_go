@@ -177,6 +177,19 @@ func grantsPublicRead(policy string) bool {
 	return false
 }
 
+// RemovePrefix deletes every object whose key starts with prefix: all of a
+// practice's files, when it is purged. Keys begin with the tenant id for
+// exactly this.
+func (p *S3Presigner) RemovePrefix(ctx context.Context, prefix string) error {
+	objects := p.client.ListObjects(ctx, p.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true})
+	for result := range p.client.RemoveObjects(ctx, p.bucket, objects, minio.RemoveObjectsOptions{}) {
+		if result.Err != nil {
+			return fmt.Errorf("remove %s: %w", result.ObjectName, result.Err)
+		}
+	}
+	return nil
+}
+
 // ErrNotStored is Stat's answer for a key the store does not hold.
 var ErrNotStored = errors.New("object not stored")
 

@@ -21,6 +21,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/jobs"
+	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/errreport"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
@@ -63,7 +64,20 @@ func run() error {
 	defer pool.Close()
 
 	wall := clock.System{}
-	services := app.New(app.Options{Pool: pool, Clock: wall})
+	// Object storage is optional for the worker: only purging a deleted
+	// practice touches it, and that job says so if it is missing.
+	var storage jobs.Storage
+	if cfg.StorageAccessKey != "" {
+		presigner, err := media.NewS3Presigner(media.S3Config{
+			Endpoint: cfg.StorageEndpoint, Region: cfg.StorageRegion, Bucket: cfg.StorageBucket,
+			AccessKey: cfg.StorageAccessKey, SecretKey: cfg.StorageSecretKey, UseSSL: cfg.StorageUseSSL,
+		})
+		if err != nil {
+			return err
+		}
+		storage = presigner
+	}
+	services := app.New(app.Options{Pool: pool, Clock: wall, Storage: storage, PurgeAfter: cfg.AccountPurgeAfter})
 	runner := jobs.NewRunner(pool, wall, log, cfg.JobInterval, services.Jobs()...)
 
 	log.Info("worker started", slog.Duration("interval", cfg.JobInterval))

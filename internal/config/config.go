@@ -80,6 +80,9 @@ type Config struct {
 
 	// JobInterval is how often the leading worker looks for due jobs.
 	JobInterval time.Duration
+	// AccountPurgeAfter is the grace period between an owner deleting their
+	// practice and the worker removing it for good.
+	AccountPurgeAfter time.Duration
 }
 
 // IsProduction reports whether relaxed development behaviour must be disabled.
@@ -149,7 +152,8 @@ func load(api bool) (Config, error) {
 		SentryDSN: l.str("SENTRY_DSN", ""),
 		Release:   l.str("RELEASE", "dev"),
 
-		JobInterval: l.dur("JOB_INTERVAL", time.Minute),
+		JobInterval:       l.dur("JOB_INTERVAL", time.Minute),
+		AccountPurgeAfter: l.dur("ACCOUNT_PURGE_AFTER", 30*24*time.Hour),
 	}
 
 	if api {

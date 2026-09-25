@@ -94,6 +94,8 @@ func run() error {
 		RefreshTokenTTL: cfg.RefreshTokenTTL,
 		ColumnKey:       cfg.ColumnEncryptionKey,
 		Presigner:       presigner,
+		Storage:         presigner,
+		PurgeAfter:      cfg.AccountPurgeAfter,
 		PresignTTL:      cfg.PresignTTL,
 		PublicBaseURL:   cfg.PublicBaseURL,
 		Mailer:          mailer,

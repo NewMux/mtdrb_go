@@ -398,6 +398,46 @@ paths:
         "204": { description: Off }
         "400": { $ref: "#/components/responses/BadRequest" }
 
+  /v1/session/delete-account:
+    post:
+      tags: [Authentication]
+      summary: Delete the caller's account
+      description: |
+        For the practice's owner, this deletes the practice: every member is
+        signed out and can no longer sign in, and the worker removes the
+        practice's records and files for good once `purge_after` has passed
+        (30 days by default). An operator can still undo it until then.
+
+        For any other member, their own name and email are erased at once and
+        they can no longer sign in; the practice's records stay with it.
+
+        Takes the password, like turning two-step off. The web build's refresh
+        cookie is cleared.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: What was deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scope]
+                properties:
+                  scope: { type: string, enum: [practice, user] }
+                  purge_after:
+                    type: string
+                    format: date-time
+                    description: When a deleted practice is removed for good.
+        "400": { $ref: "#/components/responses/BadRequest" }
+
   /v1/session/devices:
     get:
       tags: [Authentication]

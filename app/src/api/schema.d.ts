@@ -750,6 +750,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/session/delete-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete the caller's account
+         * @description For the practice's owner, this deletes the practice: every member is
+         *     signed out and can no longer sign in, and the worker removes the
+         *     practice's records and files for good once `purge_after` has passed
+         *     (30 days by default). An operator can still undo it until then.
+         *
+         *     For any other member, their own name and email are erased at once and
+         *     they can no longer sign in; the practice's records stay with it.
+         *
+         *     Takes the password, like turning two-step off. The web build's refresh
+         *     cookie is cleared.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: password */
+                        password: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description What was deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            scope: "practice" | "user";
+                            /**
+                             * Format: date-time
+                             * @description When a deleted practice is removed for good.
+                             */
+                            purge_after?: string;
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/session/devices": {
         parameters: {
             query?: never;

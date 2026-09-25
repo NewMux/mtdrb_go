@@ -58,6 +58,12 @@ type Options struct {
 	// SecureCookies is the auth transport's environment switch; see
 	// auth.HandlerOptions.
 	SecureCookies bool
+	// PurgeAfter is how long a deleted practice waits before the worker
+	// removes it. Zero means auth.DefaultPurgeAfter.
+	PurgeAfter time.Duration
+	// Storage removes a purged practice's files. Nil in entrypoints with no
+	// object storage; the purge then refuses a practice that has files.
+	Storage jobs.Storage
 }
 
 // Services is every domain service, built once.
@@ -78,6 +84,8 @@ type Services struct {
 
 	publicBaseURL string
 	authOptions   auth.HandlerOptions
+	purgeAfter    time.Duration
+	storage       jobs.Storage
 }
 
 // New builds the service graph.
@@ -91,8 +99,13 @@ func New(o Options) *Services {
 		argon = auth.DefaultArgon2Params()
 	}
 
+	if o.PurgeAfter <= 0 {
+		// Zero would purge a practice the moment it was deleted.
+		o.PurgeAfter = auth.DefaultPurgeAfter
+	}
 	s := &Services{
 		Pool: o.Pool, Clock: wall, publicBaseURL: o.PublicBaseURL,
+		purgeAfter: o.PurgeAfter, storage: o.Storage,
 		authOptions: auth.HandlerOptions{SecureCookies: o.SecureCookies},
 	}
 	s.Issuer = auth.NewTokenIssuer(o.JWTSigningKey, o.AccessTokenTTL, o.RefreshTokenTTL, wall)
@@ -103,7 +116,7 @@ func New(o Options) *Services {
 	s.Ledger = ledger.NewService(wall)
 	s.Programming = programming.NewService(wall)
 	s.Auth = auth.NewService(o.Pool, s.Issuer, s.Ledger, s.Programming, wall, argon).
-		WithSecurity(auth.Security{ColumnKey: o.ColumnKey, Mailer: o.Mailer, AppURL: o.AppURL})
+		WithSecurity(auth.Security{ColumnKey: o.ColumnKey, Mailer: o.Mailer, AppURL: o.AppURL, PurgeAfter: o.PurgeAfter})
 
 	s.CRM = crm.NewService(wall, o.ColumnKey)
 	if o.Presigner != nil {
@@ -122,6 +135,7 @@ func (s *Services) Jobs() []jobs.Job {
 	return []jobs.Job{
 		jobs.PackageExpiry(s.Billing),
 		jobs.Housekeeping(),
+		jobs.AccountPurge(s.purgeAfter, s.storage),
 	}
 }
 
