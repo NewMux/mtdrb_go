@@ -15,7 +15,7 @@
  */
 
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { type ColorValue, Pressable, View } from 'react-native';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 
 import { useT } from '@/i18n';
@@ -45,8 +45,10 @@ function AddClientButton() {
   );
 }
 
-const tabIcon = (name: IconName) => ({ color, size }: { color: string; size: number }) => (
-  <Icon name={name} color={color} size={size - 4} />
+// The navigator types the tint as ColorValue since SDK 57, but it only ever
+// hands back the plain strings set as tabBarActive/InactiveTintColor below.
+const tabIcon = (name: IconName) => ({ color, size }: { color: ColorValue; size: number }) => (
+  <Icon name={name} color={color as string} size={size - 4} />
 );
 
 /** Screens where the add button would sit over something the trainer needs. */
