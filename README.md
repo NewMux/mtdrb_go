@@ -30,6 +30,9 @@ they agree by construction. See [ADR 0001](docs/adr/0001-double-entry-ledger.md)
 [RUNNING.md](RUNNING.md) — the backend, the app on your phone, and a
 walkthrough of both journeys.
 
+[LAUNCH.md](LAUNCH.md) — production: the Docker deployment, the database
+roles, backups, and getting the app into the stores.
+
 ## Architecture
 
 - **API** — Go 1.24, chi, pgx, Postgres 16; `api/openapi.yaml` is the contract, and the client's wire types are generated from it
@@ -62,7 +65,7 @@ Requires Go 1.24+, Docker and Node 20+.
 
 ```bash
 cp .env.example .env
-make up          # Postgres + MinIO, then migrations
+make up          # Postgres + object storage, then migrations
 make run         # API on :8080
 
 make app-install # once

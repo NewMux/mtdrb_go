@@ -1,5 +1,8 @@
 # Running CoachPulse
 
+This is running it on your own machine. For production — servers, the app
+stores, backups — see [LAUNCH.md](LAUNCH.md).
+
 Two processes: the Go API with its Postgres, and the Expo app. The app is
 offline-first, so once it has synced once it keeps working with the API
 stopped — which is worth trying deliberately, because it is the whole point of
@@ -8,7 +11,8 @@ the product.
 ## 1. The backend
 
 ```bash
-make up      # Postgres + MinIO via deploy/docker-compose.yml, then migrations
+cp .env.example .env
+make up      # Postgres + object storage via deploy/docker-compose.yml, then migrations
 make run     # API on :8080
 ```
 
@@ -30,8 +34,10 @@ make migrate
 ```
 
 The API checks its object-storage bucket at boot and exits if it cannot reach
-it, so you also need something S3-shaped on `:9000`. MinIO is the intended one;
-any S3-compatible server will satisfy the check. Media (progress photos) is the
+it, so you also need something S3-shaped on `:9000`. The compose file runs
+SeaweedFS there (MinIO no longer publishes server images); any S3-compatible
+server will do, and with `STORAGE_CREATE_BUCKET=true` the API creates the
+bucket itself. Media (progress photos) is the
 only feature that needs it — nothing in the walkthrough below does.
 
 </details>
@@ -58,17 +64,19 @@ server).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SMTP_HOST`, `SMTP_PORT` | —, 587 | Mail server; STARTTLS when offered |
+| `SMTP_HOST`, `SMTP_PORT` | —, 587 | Mail server |
+| `SMTP_TLS` | `starttls` (`implicit` on 465) | `starttls` refuses a server that does not offer it; `none` is for a local mail catcher and refused in production |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | — | Authentication, if the server wants it |
 | `MAIL_FROM` | `CoachPulse <no-reply@coachpulse.io>` | Sender |
 | `APP_URL` | `http://localhost:8081` | Where reset links point; https in production |
-| `TRUST_PROXY` | `false` | Take the caller's address from `X-Forwarded-For` when rate-limiting sign-in. Only behind a load balancer that sets it |
+| `TRUST_PROXY` | `false` | Take the caller's address from the right-most `X-Forwarded-For` entry, the one the proxy in front appended. Only when every request arrives through that proxy |
 
 **Plans.** Every new practice starts a fourteen-day trial of everything. When
 it lapses the account is read-only: every read keeps working, and writes
 (sync included) answer `402 subscription_inactive` until the plan changes.
 There is no payment provider yet; plans are changed with `cmd/admin`, which
-connects as the database owner:
+connects as the database owner and acts as `coachpulse_definer`, the one role
+that reads across practices:
 
 ```bash
 export OWNER_DATABASE_URL=postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
@@ -76,7 +84,12 @@ go run ./cmd/admin list-tenants
 go run ./cmd/admin set-plan <tenant-id> pro -renews-on 2026-12-31
 go run ./cmd/admin set-plan <tenant-id> starter      # 25 active clients, 1 location
 go run ./cmd/admin extend-trial <tenant-id> 7
+go run ./cmd/admin restore-tenant <tenant-id>       # undo a deletion within 30 days
 ```
+
+**Deleting an account.** Settings → Security → *Delete account*. For an owner
+it deactivates the practice at once; the worker removes it for good after
+`ACCOUNT_PURGE_AFTER` (30 days). `restore-tenant` undoes it until then.
 
 A change reaches the trainer's devices at their next token refresh (within
 fifteen minutes) and their next sync.
@@ -206,7 +219,7 @@ bugs table in [STATUS.md](STATUS.md).
 | Symptom | Cause |
 |---|---|
 | App hangs on sign-in | `EXPO_PUBLIC_API_URL` points at `localhost`, or the phone is on another network |
-| `check bucket coachpulse` at boot | Object storage is not running; `make up` starts MinIO |
+| `check bucket coachpulse` at boot | Object storage is not running, or the bucket is missing: `make up` starts it, and `STORAGE_CREATE_BUCKET=true` (in `.env.example`) creates the bucket |
 | CORS errors in a browser | Add that exact origin to `CORS_ORIGINS` |
 | Today is empty | Nothing is booked for today — see step 4 |
 | Badge says "needs attention" | An operation was refused. Tap it: the reason is in plain words, with *Try again* or *Discard* |
