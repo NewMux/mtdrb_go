@@ -21,17 +21,27 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/mail"
+	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/testsupport"
 )
 
 // fakePresigner stands in for object storage. Presigned URLs are computed
 // without contacting the store in any case, so a fake exercises the same code
-// path the real S3 presigner would.
-type fakePresigner struct{ deleted []string }
+// path the real S3 presigner would. stored is what a client has uploaded.
+type fakePresigner struct {
+	deleted []string
+	stored  map[string]media.StoredObject
+}
 
-func (f *fakePresigner) PresignPut(_ context.Context, key, _ string, _ time.Duration) (string, error) {
+func (f *fakePresigner) PresignPut(_ context.Context, key, _ string, _ int64, _ time.Duration) (string, error) {
 	return "https://storage.test/" + key + "?signature=put", nil
+}
+func (f *fakePresigner) Stat(_ context.Context, key string) (media.StoredObject, error) {
+	if o, ok := f.stored[key]; ok {
+		return o, nil
+	}
+	return media.StoredObject{}, media.ErrNotStored
 }
 func (f *fakePresigner) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
 	return "https://storage.test/" + key + "?signature=get", nil
@@ -42,8 +52,9 @@ func (f *fakePresigner) Delete(_ context.Context, key string) error {
 }
 
 type harness struct {
-	server *httptest.Server
-	t      *testing.T
+	server  *httptest.Server
+	t       *testing.T
+	storage *fakePresigner
 }
 
 // harnessOptions are what a journey needs to control: the time, and where
@@ -83,6 +94,7 @@ func newHarnessWith(t *testing.T, o harnessOptions) *harness {
 
 	// The same wiring the API binary uses, so a service added there is under
 	// test here without anyone remembering to add it twice.
+	storage := &fakePresigner{stored: map[string]media.StoredObject{}}
 	services := app.New(app.Options{
 		Pool:            pool,
 		Clock:           wall,
@@ -91,7 +103,7 @@ func newHarnessWith(t *testing.T, o harnessOptions) *harness {
 		RefreshTokenTTL: cfg.RefreshTokenTTL,
 		Argon2:          params,
 		ColumnKey:       []byte(strings.Repeat("c", 32)),
-		Presigner:       &fakePresigner{},
+		Presigner:       storage,
 		PresignTTL:      cfg.PresignTTL,
 		PublicBaseURL:   cfg.PublicBaseURL,
 		Mailer:          o.mailer,
@@ -101,7 +113,7 @@ func newHarnessWith(t *testing.T, o harnessOptions) *harness {
 
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return &harness{server: ts, t: t}
+	return &harness{server: ts, t: t, storage: storage}
 }
 
 // do issues a request and decodes the JSON response.
@@ -359,8 +371,19 @@ func TestMediaUploadIssuesPresignedURL(t *testing.T) {
 		t.Errorf("a progress photo was classified as %v", object["sensitivity"])
 	}
 
-	// Confirm, then fetch a download link.
+	// Confirming before the bytes arrive is refused: the gallery must not
+	// list a photo that will not load.
 	objectID := object["id"].(string)
+	status, body := h.do(http.MethodPost, "/v1/media/"+objectID+"/confirm", token, nil)
+	if status != http.StatusConflict || errorCode(body) != "upload_incomplete" {
+		t.Errorf("confirm before upload = %d %v, want 409 upload_incomplete", status, body)
+	}
+
+	// The client PUTs to the presigned URL; the fake store now holds it.
+	key := strings.TrimSuffix(strings.TrimPrefix(upload["upload_url"].(string), "https://storage.test/"), "?signature=put")
+	h.storage.stored[key] = media.StoredObject{Size: 2_000_000, ContentType: "image/jpeg"}
+
+	// Confirm, then fetch a download link.
 	if status, _ = h.do(http.MethodPost, "/v1/media/"+objectID+"/confirm", token, nil); status != http.StatusOK {
 		t.Errorf("confirm = %d", status)
 	}
@@ -370,6 +393,27 @@ func TestMediaUploadIssuesPresignedURL(t *testing.T) {
 	}
 	if download["sensitive"] != true {
 		t.Error("download of a progress photo was not marked sensitive")
+	}
+}
+
+func TestMediaConfirmRemovesAnUploadThatIsNotWhatWasApproved(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("coach@gym.io")
+
+	_, upload := h.do(http.MethodPost, "/v1/media/uploads", token, map[string]any{
+		"kind": "progress_photo", "content_type": "image/jpeg", "byte_size": 1000,
+	})
+	objectID := upload["object"].(map[string]any)["id"].(string)
+	key := strings.TrimSuffix(strings.TrimPrefix(upload["upload_url"].(string), "https://storage.test/"), "?signature=put")
+
+	// A store that does not enforce signed headers let an HTML page through.
+	h.storage.stored[key] = media.StoredObject{Size: 1000, ContentType: "text/html"}
+	status, body := h.do(http.MethodPost, "/v1/media/"+objectID+"/confirm", token, nil)
+	if status != http.StatusConflict || errorCode(body) != "upload_incomplete" {
+		t.Fatalf("mismatched upload confirmed: %d %v", status, body)
+	}
+	if len(h.storage.deleted) != 1 || h.storage.deleted[0] != key {
+		t.Errorf("the mismatched object was not removed from storage: %v", h.storage.deleted)
 	}
 }
 

@@ -46,7 +46,10 @@ type Config struct {
 	StorageAccessKey string
 	StorageSecretKey string
 	StorageUseSSL    bool
-	PresignTTL       time.Duration // lifetime of a presigned media URL
+	// StorageCreateBucket lets the API create a missing bucket at startup.
+	// Off by default: production keys should not be able to create buckets.
+	StorageCreateBucket bool
+	PresignTTL          time.Duration // lifetime of a presigned media URL
 
 	PublicBaseURL string // origin used to build invoice share links
 	CORSOrigins   []string
@@ -111,13 +114,14 @@ func load(api bool) (Config, error) {
 		AccessTokenTTL:  l.dur("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: l.dur("REFRESH_TOKEN_TTL", 30*24*time.Hour),
 
-		StorageEndpoint:  l.str("STORAGE_ENDPOINT", "localhost:9000"),
-		StorageRegion:    l.str("STORAGE_REGION", "us-east-1"),
-		StorageBucket:    l.str("STORAGE_BUCKET", "coachpulse"),
-		StorageAccessKey: required("STORAGE_ACCESS_KEY"),
-		StorageSecretKey: required("STORAGE_SECRET_KEY"),
-		StorageUseSSL:    l.boolean("STORAGE_USE_SSL", false),
-		PresignTTL:       l.dur("PRESIGN_TTL", 5*time.Minute),
+		StorageEndpoint:     l.str("STORAGE_ENDPOINT", "localhost:9000"),
+		StorageRegion:       l.str("STORAGE_REGION", "us-east-1"),
+		StorageBucket:       l.str("STORAGE_BUCKET", "coachpulse"),
+		StorageAccessKey:    required("STORAGE_ACCESS_KEY"),
+		StorageSecretKey:    required("STORAGE_SECRET_KEY"),
+		StorageUseSSL:       l.boolean("STORAGE_USE_SSL", false),
+		StorageCreateBucket: l.boolean("STORAGE_CREATE_BUCKET", false),
+		PresignTTL:          l.dur("PRESIGN_TTL", 5*time.Minute),
 
 		PublicBaseURL: l.str("PUBLIC_BASE_URL", "http://localhost:8080"),
 		CORSOrigins:   l.list("CORS_ORIGINS", "http://localhost:8081"),

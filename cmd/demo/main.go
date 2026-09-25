@@ -42,6 +42,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/db"
+	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
 )
@@ -245,10 +246,13 @@ func prepare(ctx context.Context, ownerURL, name string) error {
 
 type noPresigner struct{}
 
-func (noPresigner) PresignPut(context.Context, string, string, time.Duration) (string, error) {
+func (noPresigner) PresignPut(context.Context, string, string, int64, time.Duration) (string, error) {
 	return "", errors.New("the demo records no media")
 }
 func (noPresigner) PresignGet(context.Context, string, time.Duration) (string, error) {
 	return "", errors.New("the demo records no media")
 }
 func (noPresigner) Delete(context.Context, string) error { return nil }
+func (noPresigner) Stat(context.Context, string) (media.StoredObject, error) {
+	return media.StoredObject{}, media.ErrNotStored
+}

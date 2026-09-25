@@ -14,6 +14,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mime"
 	"path"
@@ -103,9 +104,17 @@ type Object struct {
 // An interface rather than a concrete S3 client so the service is testable
 // without a live bucket, and so MinIO, S3 and R2 are interchangeable.
 type Presigner interface {
-	PresignPut(ctx context.Context, key, contentType string, ttl time.Duration) (string, error)
+	PresignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, error)
 	PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error)
+	// Stat reports what the store holds at key, or ErrNotStored.
+	Stat(ctx context.Context, key string) (StoredObject, error)
 	Delete(ctx context.Context, key string) error
+}
+
+// StoredObject is what the store reports about an object's bytes.
+type StoredObject struct {
+	Size        int64
+	ContentType string
 }
 
 // Service issues upload and download URLs and tracks object metadata.
@@ -200,7 +209,7 @@ func (s *Service) RequestUpload(ctx context.Context, tx pgx.Tx, tenantID ids.ID,
 		return Upload{}, errs.Internal(err, "record media object")
 	}
 
-	url, err := s.presigner.PresignPut(ctx, obj.StorageKey, obj.ContentType, s.ttl)
+	url, err := s.presigner.PresignPut(ctx, obj.StorageKey, obj.ContentType, obj.ByteSize, s.ttl)
 	if err != nil {
 		return Upload{}, errs.Internal(err, "presign upload")
 	}
@@ -214,18 +223,42 @@ func (s *Service) RequestUpload(ctx context.Context, tx pgx.Tx, tenantID ids.ID,
 }
 
 // ConfirmUpload marks an object as successfully stored.
+//
+// It asks the store rather than taking the client's word. An upload that
+// never arrived must not become a gallery entry that fails to load, and one
+// whose size or type differs from what was approved is removed: not every
+// S3-compatible store enforces the headers the upload URL was signed with.
 func (s *Service) ConfirmUpload(ctx context.Context, tx pgx.Tx, objectID ids.ID) (Object, error) {
-	tag, err := tx.Exec(ctx,
+	obj, err := s.Get(ctx, tx, objectID)
+	if err != nil {
+		return Object{}, err
+	}
+	if obj.ConfirmedAt != nil {
+		return obj, nil // confirming twice is harmless
+	}
+	stored, err := s.presigner.Stat(ctx, obj.StorageKey)
+	if errors.Is(err, ErrNotStored) {
+		return Object{}, errs.Conflict(errs.CodeUploadIncomplete,
+			"nothing has been uploaded for this object yet")
+	}
+	if err != nil {
+		return Object{}, errs.Internal(err, "check stored object")
+	}
+	if stored.Size != obj.ByteSize || normalizeContentType(stored.ContentType) != obj.ContentType {
+		if err := s.presigner.Delete(ctx, obj.StorageKey); err != nil {
+			return Object{}, errs.Internal(err, "remove mismatched upload")
+		}
+		return Object{}, errs.Conflict(errs.CodeUploadIncomplete,
+			"the upload was %d bytes of %s, but %d bytes of %s were approved",
+			stored.Size, stored.ContentType, obj.ByteSize, obj.ContentType)
+	}
+	_, err = tx.Exec(ctx,
 		`UPDATE media_objects SET confirmed_at = now()
 		  WHERE id = $1 AND confirmed_at IS NULL AND deleted_at IS NULL`, objectID)
 	if err != nil {
 		return Object{}, errs.Internal(err, "confirm upload")
 	}
-	if tag.RowsAffected() == 0 {
-		// Either unknown, already confirmed, or deleted. Confirming twice is
-		// harmless, so this is only an error when the object cannot be found.
-		return s.Get(ctx, tx, objectID)
-	}
+	// Zero rows means a concurrent confirm won; the result is the same.
 	return s.Get(ctx, tx, objectID)
 }
 

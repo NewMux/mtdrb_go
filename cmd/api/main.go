@@ -63,7 +63,7 @@ func run() error {
 		return err
 	}
 	// Fail at startup rather than on the first progress photo.
-	if err := presigner.EnsureBucket(ctx, cfg.StorageRegion); err != nil {
+	if err := presigner.EnsureBucket(ctx, cfg.StorageRegion, cfg.StorageCreateBucket); err != nil {
 		return err
 	}
 

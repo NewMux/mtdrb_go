@@ -61,6 +61,7 @@ const (
 	CodeMFARequired          = "mfa_required"
 	CodeInvalidMFACode       = "invalid_mfa_code"
 	CodeCurrencyLocked       = "currency_locked"
+	CodeUploadIncomplete     = "upload_incomplete"
 )
 
 // Error is an application error with a transport-mappable Kind.

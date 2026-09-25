@@ -16,17 +16,21 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/api"
 	"github.com/NewMux/mtdrb_go/internal/app"
 	"github.com/NewMux/mtdrb_go/internal/config"
+	"github.com/NewMux/mtdrb_go/internal/media"
 )
 
 type nopPresigner struct{}
 
-func (nopPresigner) PresignPut(context.Context, string, string, time.Duration) (string, error) {
+func (nopPresigner) PresignPut(context.Context, string, string, int64, time.Duration) (string, error) {
 	return "", nil
 }
 func (nopPresigner) PresignGet(context.Context, string, time.Duration) (string, error) {
 	return "", nil
 }
 func (nopPresigner) Delete(context.Context, string) error { return nil }
+func (nopPresigner) Stat(context.Context, string) (media.StoredObject, error) {
+	return media.StoredObject{}, media.ErrNotStored
+}
 
 // Every route the server registers is documented in api/openapi.yaml, and
 // every documented operation exists.

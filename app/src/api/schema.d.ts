@@ -3878,6 +3878,10 @@ export interface paths {
          * @description The bytes go straight to storage, never through the API. Portal
          *     clients may call this too; their uploads are always attached to
          *     themselves, whatever `client_id` says.
+         *
+         *     The URL is signed with `Content-Type` and `Content-Length`: the PUT
+         *     must send exactly the type and `byte_size` asked for here, or the
+         *     store refuses it.
          */
         post: {
             parameters: {
@@ -3928,7 +3932,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Confirm an upload landed */
+        /**
+         * Confirm an upload landed
+         * @description The server asks the store rather than taking the client's word.
+         *     `409 upload_incomplete` if nothing has arrived yet (retry after the
+         *     PUT finishes), or if what arrived differs in size or type from what
+         *     was approved, in which case the stored bytes are removed.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -3949,6 +3959,7 @@ export interface paths {
                         "application/json": components["schemas"]["MediaObject"];
                     };
                 };
+                409: components["responses"]["Conflict"];
             };
         };
         delete?: never;

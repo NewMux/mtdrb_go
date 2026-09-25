@@ -1848,6 +1848,10 @@ paths:
         The bytes go straight to storage, never through the API. Portal
         clients may call this too; their uploads are always attached to
         themselves, whatever `client_id` says.
+
+        The URL is signed with `Content-Type` and `Content-Length`: the PUT
+        must send exactly the type and `byte_size` asked for here, or the
+        store refuses it.
       requestBody:
         required: true
         content:
@@ -1873,12 +1877,18 @@ paths:
     post:
       tags: [Media]
       summary: Confirm an upload landed
+      description: |
+        The server asks the store rather than taking the client's word.
+        `409 upload_incomplete` if nothing has arrived yet (retry after the
+        PUT finishes), or if what arrived differs in size or type from what
+        was approved, in which case the stored bytes are removed.
       responses:
         "200":
           description: The confirmed object
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MediaObject" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /v1/media/{objectID}/download:
     parameters:
