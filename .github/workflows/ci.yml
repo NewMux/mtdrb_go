@@ -55,32 +55,41 @@ jobs:
         run: go vet ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.5.0
 
       - name: Unit tests
         run: go test -race -count=1 ./...
 
-      # The API role must not bypass RLS, or the isolation tests would pass
-      # vacuously. CI provisions it the same way docker-compose does.
-      - name: Provision RLS-bound app role
+      # CI sets the database up the way production does, not the way a
+      # laptop does. Migrations run as an owner that is NOT a superuser, as on
+      # any managed Postgres: a superuser reads past row-level security, and
+      # migrating as one hid a bug that stopped anyone signing in on a real
+      # deployment. The app role is provisioned with deploy/provision.sql, the
+      # script production uses. Test fixtures still connect as postgres.
+      - name: Provision like production
         env:
           PGPASSWORD: postgres
         run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE coachpulse_owner LOGIN PASSWORD 'owner' CREATEROLE" \
+            -c "ALTER DATABASE coachpulse OWNER TO coachpulse_owner"
           psql -h localhost -U postgres -d coachpulse -v ON_ERROR_STOP=1 \
-            -f deploy/postgres-init/00-app-role.sql
+            -c "ALTER SCHEMA public OWNER TO coachpulse_owner"
+          PGPASSWORD=owner psql -h localhost -U coachpulse_owner -d coachpulse \
+            -v app_password=coachpulse_app_ci_password_0000 -f deploy/provision.sql
 
       - name: Apply migrations
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
+          DATABASE_URL: postgres://coachpulse_owner:owner@localhost:5432/coachpulse?sslmode=disable
         run: go run ./cmd/migrate up
 
       # Reversibility is a release requirement: a migration that cannot roll
       # back turns a bad deploy into an outage.
       - name: Migrations roll back and reapply
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
+          DATABASE_URL: postgres://coachpulse_owner:owner@localhost:5432/coachpulse?sslmode=disable
         run: |
           go run ./cmd/migrate reset
           go run ./cmd/migrate up
@@ -88,7 +97,7 @@ jobs:
       - name: Integration tests
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
-          TEST_APP_DATABASE_URL: postgres://coachpulse_app:coachpulse_app@localhost:5432/coachpulse?sslmode=disable
+          TEST_APP_DATABASE_URL: postgres://coachpulse_app:coachpulse_app_ci_password_0000@localhost:5432/coachpulse?sslmode=disable
         # -p 1: integration packages share one database and reset it
         # between tests, so they must not run concurrently.
         run: go test -race -count=1 -p 1 -tags=integration ./...
