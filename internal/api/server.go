@@ -17,6 +17,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
+	"github.com/NewMux/mtdrb_go/internal/legal"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/ratelimit"
@@ -93,6 +94,14 @@ func (s *Server) routes(deps Deps) chi.Router {
 	// the link their trainer sent never notices.
 	r.With(httpx.RateLimit(ratelimit.New(20, 3*time.Second, nil))).
 		Mount("/public", deps.Billing.PublicRoutes())
+
+	// The privacy policy and terms, at the stable URLs the store listings
+	// and the app link to.
+	r.Mount("/legal", legal.Routes(legal.Operator{
+		Entity: s.cfg.LegalEntity, Address: s.cfg.LegalAddress, ContactEmail: s.cfg.LegalContactEmail,
+		Jurisdiction: s.cfg.LegalJurisdiction, Effective: s.cfg.LegalEffective,
+		PurgeDays: int(s.cfg.AccountPurgeAfter.Hours() / 24),
+	}))
 
 	r.Route("/v1", func(v1 chi.Router) {
 		// Unauthenticated: obtaining credentials in the first place.

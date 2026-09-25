@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{{template "style"}}
+<title>Terms of service — CoachPulse</title>
+</head>
+<body>
+<main>
+<h1>Terms of service</h1>
+<p class="muted">Effective {{.Effective}}</p>
+
+<p>These terms are an agreement between you, a trainer using CoachPulse for your business, and
+{{.Entity}}, {{.Address}} (“we”), which operates it. By creating an account you accept them.</p>
+
+<h2>The service</h2>
+<p>CoachPulse helps you manage clients, sessions, training programmes, invoices and your books.
+It works offline on your devices and synchronises when it can. We may improve and change it;
+if we remove something you rely on, we will tell you in advance.</p>
+
+<h2>Your account</h2>
+<ul>
+  <li>You must give accurate details and keep your password to yourself. Turn on two-step
+  sign-in; it is in Settings.</li>
+  <li>You are responsible for what happens under your account.</li>
+  <li>You must be old enough to form a binding contract where you live, and use CoachPulse for
+  your business.</li>
+</ul>
+
+<h2>Your clients’ information</h2>
+<p>You own the records you keep in CoachPulse and are responsible for them. In particular you
+must have your clients’ permission, or another lawful basis, for what you record about them —
+especially health information and photos — and must answer their requests about it. We process
+that information only to provide the service to you, as described in our
+<a href="privacy">privacy policy</a>.</p>
+
+<h2>Plans and payment</h2>
+<ul>
+  <li>A new account starts with a free trial of fourteen days with every feature.</li>
+  <li>After that, a paid plan keeps it writable. Plans are invoiced by us; prices and limits are
+  shown in the app under Settings, Plan.</li>
+  <li>If a trial or plan lapses, your account becomes read-only: you can still see everything,
+  and nothing is deleted. Writing resumes when the plan is renewed.</li>
+  <li>CoachPulse does not process your clients’ payments. Invoices you send ask them to pay
+  you directly; you record what you receive.</li>
+</ul>
+
+<h2>Acceptable use</h2>
+<p>Do not use CoachPulse to break the law, to store information you have no right to hold, to
+attack or overload the service, to access another practice’s information, or to resell the
+service without our agreement.</p>
+
+<h2>Not professional advice</h2>
+<p>CoachPulse organises your records and does arithmetic on them. It does not give medical,
+fitness, legal, tax or accounting advice. The PAR-Q and waivers are tools for your process, not
+a substitute for medical clearance. Check tax figures with your accountant before filing.</p>
+
+<h2>Ending the agreement</h2>
+<p>You can delete your account at any time from Settings in the app. Nobody can sign in to it
+from that moment, and all of the practice’s information is permanently deleted
+{{.PurgeDays}} days later, as the privacy policy describes; keep copies of anything you need,
+such as tax records, first. We may suspend or end an account that breaks these terms, and will
+tell you why unless the law or security prevents it.</p>
+
+<h2>Availability and liability</h2>
+<p>We work to keep CoachPulse available and your data safe, and the app keeps working offline
+when it cannot reach us. But it is provided “as is”, without guarantees that it will always be
+available or free of faults. To the extent the law allows, we are not liable for indirect or
+consequential loss, and our total liability to you is limited to what you paid us in the twelve
+months before the claim. Nothing in these terms limits liability that cannot be limited by law.</p>
+
+<h2>Changes to these terms</h2>
+<p>We will tell you in the app before a significant change takes effect. If you do not agree,
+you can delete your account before then.</p>
+
+<h2>Law</h2>
+<p>These terms are governed by the law of {{.Jurisdiction}}, and disputes go to its courts,
+unless the law where you live gives you the right to bring them elsewhere.</p>
+
+<h2>Contact</h2>
+<p>{{.Entity}}, {{.Address}}. <a href="mailto:{{.ContactEmail}}">{{.ContactEmail}}</a></p>
+</main>
+<footer class="muted"><a href="privacy">Privacy policy</a></footer>
+</body>
+</html>

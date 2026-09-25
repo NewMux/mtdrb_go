@@ -80,6 +80,15 @@ type Config struct {
 
 	// JobInterval is how often the leading worker looks for due jobs.
 	JobInterval time.Duration
+	// Legal names the operator on the privacy policy and terms. Production
+	// requires the entity, address, contact and jurisdiction: a store
+	// listing must never link to a page of placeholders.
+	LegalEntity       string
+	LegalAddress      string
+	LegalContactEmail string
+	LegalJurisdiction string
+	LegalEffective    string
+
 	// AccountPurgeAfter is the grace period between an owner deleting their
 	// practice and the worker removing it for good.
 	AccountPurgeAfter time.Duration
@@ -154,6 +163,12 @@ func load(api bool) (Config, error) {
 
 		JobInterval:       l.dur("JOB_INTERVAL", time.Minute),
 		AccountPurgeAfter: l.dur("ACCOUNT_PURGE_AFTER", 30*24*time.Hour),
+
+		LegalEntity:       l.str("LEGAL_ENTITY", ""),
+		LegalAddress:      l.str("LEGAL_ADDRESS", ""),
+		LegalContactEmail: l.str("LEGAL_CONTACT_EMAIL", ""),
+		LegalJurisdiction: l.str("LEGAL_JURISDICTION", ""),
+		LegalEffective:    l.str("LEGAL_EFFECTIVE", ""),
 	}
 
 	if api {
@@ -226,6 +241,15 @@ func load(api bool) (Config, error) {
 		}
 		if cfg.SMTPHost == "" {
 			l.fail("SMTP_HOST is required in production: password resets must be delivered, not logged")
+		}
+		for key, v := range map[string]string{
+			"LEGAL_ENTITY": cfg.LegalEntity, "LEGAL_ADDRESS": cfg.LegalAddress,
+			"LEGAL_CONTACT_EMAIL": cfg.LegalContactEmail, "LEGAL_JURISDICTION": cfg.LegalJurisdiction,
+			"LEGAL_EFFECTIVE": cfg.LegalEffective,
+		} {
+			if v == "" {
+				l.fail("%s is required in production: the privacy policy and terms name the operator", key)
+			}
 		}
 		if cfg.SMTPTLS == "none" {
 			l.fail("SMTP_TLS=none is not allowed in production: a reset link sent in the clear is a password sent in the clear")

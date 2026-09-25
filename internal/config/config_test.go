@@ -90,6 +90,7 @@ func TestProductionAcceptsHardenedValues(t *testing.T) {
 	t.Setenv("CORS_ORIGINS", "https://app.coachpulse.io, https://admin.coachpulse.io")
 	t.Setenv("APP_URL", "https://app.coachpulse.io")
 	t.Setenv("SMTP_HOST", "smtp.example.com")
+	legalEnv(t)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -182,6 +183,16 @@ func productionEnv(t *testing.T) {
 	t.Setenv("APP_URL", "https://coachpulse.example")
 	t.Setenv("CORS_ORIGINS", "https://coachpulse.example")
 	t.Setenv("SMTP_HOST", "smtp.example.com")
+	legalEnv(t)
+}
+
+func legalEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("LEGAL_ENTITY", "CoachPulse Ltd")
+	t.Setenv("LEGAL_ADDRESS", "1 Example Street")
+	t.Setenv("LEGAL_CONTACT_EMAIL", "privacy@coachpulse.example")
+	t.Setenv("LEGAL_JURISDICTION", "England and Wales")
+	t.Setenv("LEGAL_EFFECTIVE", "1 October 2026")
 }
 
 func TestProductionRefusesWhatOnlySuitsALaptop(t *testing.T) {
@@ -206,6 +217,7 @@ func TestProductionRefusesWhatOnlySuitsALaptop(t *testing.T) {
 		{"bad log format", "LOG_FORMAT", "xml", "LOG_FORMAT"},
 		{"plaintext smtp", "SMTP_TLS", "none", "SMTP_TLS=none is not allowed"},
 		{"unknown smtp tls", "SMTP_TLS", "maybe", "SMTP_TLS must be"},
+		{"no legal entity", "LEGAL_ENTITY", "", "LEGAL_ENTITY is required in production"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

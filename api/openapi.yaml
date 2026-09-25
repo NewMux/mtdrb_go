@@ -1660,6 +1660,31 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/VolumePoint" }
 
+  /legal/privacy:
+    get:
+      tags: [Public]
+      summary: The privacy policy
+      description: The stable URL the store listings and the app link to.
+      security: []
+      responses:
+        "200":
+          description: The policy, as a page
+          content:
+            text/html:
+              schema: { type: string }
+
+  /legal/terms:
+    get:
+      tags: [Public]
+      summary: The terms of service
+      security: []
+      responses:
+        "200":
+          description: The terms, as a page
+          content:
+            text/html:
+              schema: { type: string }
+
   /public/invoices/{token}:
     parameters:
       - { name: token, in: path, required: true, schema: { type: string } }
@@ -1667,7 +1692,7 @@ paths:
       tags: [Public]
       summary: A shared invoice
       description: |
-        The only unauthenticated surface. Serves HTML to a browser and JSON
+        The only unauthenticated surface that carries a practice's data. Serves HTML to a browser and JSON
         when `Accept` asks for it.
 
         The payload is deliberately narrow — the bill and how to pay it, and

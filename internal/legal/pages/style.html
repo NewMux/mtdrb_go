@@ -1,0 +1,18 @@
+{{define "style"}}<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --ink:#14171f; --muted:#5d6470; --line:#e4e7ec; --accent:#1f6feb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#171a21; --ink:#e9ecf1; --muted:#9aa3b2; --line:#272c36; --accent:#60a5fa; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px 16px; background:var(--bg); color:var(--ink);
+         font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:720px; margin:0 auto; background:var(--card); border:1px solid var(--line);
+         border-radius:14px; padding:28px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  h2 { font-size:17px; margin:28px 0 8px; }
+  p, li { color:var(--ink); }
+  .muted { color:var(--muted); font-size:14px; }
+  a { color:var(--accent); }
+  ul { padding-left:20px; }
+  footer { max-width:720px; margin:16px auto 0; text-align:center; }
+</style>{{end}}

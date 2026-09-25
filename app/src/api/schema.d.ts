@@ -3484,6 +3484,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/legal/privacy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The privacy policy
+         * @description The stable URL the store listings and the app link to.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The policy, as a page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/html": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/legal/terms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The terms of service */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The terms, as a page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/html": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/invoices/{token}": {
         parameters: {
             query?: never;
@@ -3495,7 +3570,7 @@ export interface paths {
         };
         /**
          * A shared invoice
-         * @description The only unauthenticated surface. Serves HTML to a browser and JSON
+         * @description The only unauthenticated surface that carries a practice's data. Serves HTML to a browser and JSON
          *     when `Accept` asks for it.
          *
          *     The payload is deliberately narrow — the bill and how to pay it, and
