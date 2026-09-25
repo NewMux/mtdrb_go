@@ -127,8 +127,13 @@ func healthcheck() error {
 	if strings.HasPrefix(addr, ":") {
 		addr = "127.0.0.1" + addr
 	}
-	client := http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://" + addr + "/readyz")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
