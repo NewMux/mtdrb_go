@@ -1,0 +1,8 @@
+# Only the app goes into the web build, and none of its local state.
+*
+!app
+!deploy/web/Caddyfile
+app/node_modules
+app/.expo
+app/dist
+app/web-build

@@ -13,37 +13,59 @@ import React, { useState } from 'react';
 import { ScrollView, Share, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { ApiError, NetworkError } from '@/api/client';
+import { describeError } from '@/api/describe';
 import type { Invoice, ShareLink } from '@/api/types';
 import { sellPackage } from '@/features/billing';
-import { useApp } from '@/state/app';
+import { expiryFor, listOffers, type LocalOffer } from '@/features/catalog';
+import { useT } from '@/i18n';
+import { useApp, useQuery } from '@/state/app';
 import {
-  Banner, Body, Button, Caption, Card, Field, Heading, Metric,
-  NumberField, Row, Screen, Spacer, Title,
+  Banner, Body, Button, Caption, Card, Field, Heading, Label, Metric,
+  NumberField, Row, Screen, SegmentedChoice, Spacer, Title,
 } from '@/ui/components';
-import { money, parseMoney, parseReps } from '@/ui/format';
+import { amountText, parseMoney, parseReps } from '@/ui/format';
 import { space } from '@/ui/theme';
 
 export default function SellPackageScreen() {
   const { client, name } = useLocalSearchParams<{ client: string; name?: string }>();
   const { api, account, sync, syncNow, touch } = useApp();
   const router = useRouter();
+  const i18n = useT();
+  const { t, money } = i18n;
 
   const currency = account?.currency ?? 'EUR';
 
-  const [description, setDescription] = useState('10-session personal training package');
+  const [description, setDescription] = useState(() => t('sellPackage.defaultDescription'));
   const [credits, setCredits] = useState('10');
   const [price, setPrice] = useState('50.00');
+  const [priceMode, setPriceMode] = useState<'each' | 'pack'>('each');
+  const [packPrice, setPackPrice] = useState('');
+  const [offerId, setOfferId] = useState<string | null>(null);
+  const [expiresOn, setExpiresOn] = useState<string | null>(null);
+  // Packs from the price list: sold by the session, so they have a count.
+  const offers = (useQuery((db) => listOffers(db)).data ?? []).filter((o) => o.credits !== null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ invoice: Invoice; share: ShareLink | null } | null>(null);
 
   const creditCount = parseReps(credits);
-  const unitPrice = parseMoney(price);
-  const total = creditCount !== null && unitPrice !== null ? creditCount * unitPrice : null;
+  const unitPrice = parseMoney(price, currency);
+  const packTotal = parseMoney(packPrice, currency);
+  const total = priceMode === 'pack'
+    ? packTotal
+    : creditCount !== null && unitPrice !== null ? creditCount * unitPrice : null;
+
+  const pick = (offer: LocalOffer) => {
+    setOfferId(offer.id);
+    setDescription(offer.name);
+    setCredits(String(offer.credits ?? ''));
+    setPriceMode('pack');
+    setPackPrice(amountText(offer.priceMinor, currency));
+    setExpiresOn(expiryFor(offer));
+  };
 
   const issue = async () => {
-    if (creditCount === null || unitPrice === null || creditCount < 1) return;
+    if (creditCount === null || creditCount < 1 || total === null) return;
     setBusy(true);
     setError(null);
     try {
@@ -51,7 +73,9 @@ export default function SellPackageScreen() {
         clientId: client,
         description: description.trim(),
         credits: creditCount,
-        unitPriceMinor: unitPrice,
+        unitPriceMinor: unitPrice ?? 0,
+        ...(priceMode === 'pack' && packTotal !== null ? { packPriceMinor: packTotal } : {}),
+        expiresOn,
         currency,
       });
       setIssued(result);
@@ -60,7 +84,7 @@ export default function SellPackageScreen() {
       await syncNow();
       touch();
     } catch (cause) {
-      setError(describe(cause));
+      setError(describeError(cause, i18n, 'sellPackage.offlineError'));
     } finally {
       setBusy(false);
     }
@@ -69,7 +93,7 @@ export default function SellPackageScreen() {
   const shareLink = async () => {
     if (!issued?.share) return;
     await Share.share({
-      message: `Here's your invoice ${issued.invoice.number ?? ''} — it has my bank details on it. ${issued.share.url}`.trim(),
+      message: t('sellPackage.shareMessage', { number: issued.invoice.number ?? '', url: issued.share.url }),
       url: issued.share.url,
     });
   };
@@ -78,43 +102,39 @@ export default function SellPackageScreen() {
     return (
       <Screen>
         <ScrollView contentContainerStyle={{ padding: space.lg }}>
-          <Title>Issued</Title>
+          <Title>{t('sellPackage.issuedTitle')}</Title>
           <Spacer size={space.xs} />
           <Body muted>
             {issued.invoice.number
-              ? `Invoice ${issued.invoice.number}.`
-              : 'Invoice issued.'}{' '}
-            The credits are on {name ?? 'the client'}&apos;s account and the money is booked as owed,
-            not yet earned.
+              ? t('sellPackage.invoiceNumbered', { number: issued.invoice.number })
+              : t('sellPackage.invoiceIssued')}{' '}
+            {t('sellPackage.bookedAsOwed', { name: name ?? t('sellPackage.theClient') })}
           </Body>
 
           <Spacer size={space.lg} />
           <Card>
             <Metric
               value={money(issued.invoice.total_minor, issued.invoice.currency || currency)}
-              label="to collect"
+              label={t('sellPackage.toCollect')}
             />
           </Card>
 
           <Spacer size={space.lg} />
           {issued.share ? (
             <>
-              <Button label="Send the link" tone="primary" onPress={() => { void shareLink(); }} />
+              <Button label={t('sellPackage.sendLink')} icon="share" tone="primary" onPress={() => { void shareLink(); }} />
               <Spacer size={space.sm} />
-              <Caption>
-                The link shows the invoice and your payment instructions. Anyone holding it can
-                view it, so send it to the client and nobody else.
-              </Caption>
+              <Caption>{t('sellPackage.linkWarning')}</Caption>
             </>
           ) : (
             <Banner
-              message="The invoice is issued, but the share link could not be minted. You can create one from the invoice later."
+              message={t('sellPackage.noLink')}
               tone="muted"
             />
           )}
 
           <Spacer size={space.xl} />
-          <Button label="Done" onPress={() => router.back()} />
+          <Button label={t('common.done')} onPress={() => router.back()} />
         </ScrollView>
       </Screen>
     );
@@ -123,14 +143,14 @@ export default function SellPackageScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: space.lg }} keyboardShouldPersistTaps="handled">
-        <Title>Sell a package</Title>
-        <Caption>{name ?? 'Client'}</Caption>
+        <Title>{t('sellPackage.title')}</Title>
+        <Caption>{name ?? t('sellPackage.clientFallback')}</Caption>
 
         <Spacer size={space.lg} />
         {sync.offline ? (
           <>
             <Banner
-              message="No connection. Invoice numbers have to be gap-free, so they are issued by the server — this one has to wait for signal."
+              message={t('sellPackage.offline')}
               tone="warning"
             />
             <Spacer />
@@ -143,19 +163,57 @@ export default function SellPackageScreen() {
           </>
         ) : null}
 
-        <Field label="Description" value={description} onChangeText={setDescription} />
+        {offers.length > 0 ? (
+          <>
+            <Label>{t('sellPackage.fromPriceList')}</Label>
+            <Spacer size={space.sm} />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+              {offers.map((offer) => (
+                <Button
+                  key={offer.id}
+                  compact
+                  tone={offer.id === offerId ? 'primary' : 'default'}
+                  label={`${offer.name} · ${money(offer.priceMinor, currency)}`}
+                  onPress={() => pick(offer)}
+                />
+              ))}
+            </View>
+            <Spacer size={space.lg} />
+          </>
+        ) : null}
+
+        <Field label={t('sellPackage.description')} value={description} onChangeText={(v) => { setDescription(v); setOfferId(null); }} />
+        <Spacer />
+        <SegmentedChoice
+          options={[
+            { value: 'each', label: t('sellPackage.perSession') },
+            { value: 'pack', label: t('sellPackage.wholePack') },
+          ] as const}
+          value={priceMode}
+          onChange={setPriceMode}
+        />
         <Spacer />
         <Row>
-          <NumberField label="Sessions" value={credits} onChangeText={setCredits} placeholder="10" />
-          <NumberField label={`Price each (${currency})`} value={price} onChangeText={setPrice} placeholder="50.00" />
+          <NumberField label={t('sellPackage.sessions')} value={credits} onChangeText={setCredits} placeholder="10" />
+          {priceMode === 'each' ? (
+            <NumberField label={t('sellPackage.priceEach', { currency })} value={price} onChangeText={setPrice} placeholder="50.00" />
+          ) : (
+            <NumberField label={t('sellPackage.packPrice', { currency })} value={packPrice} onChangeText={setPackPrice} placeholder="3500.00" />
+          )}
         </Row>
+        {expiresOn ? (
+          <>
+            <Spacer size={space.sm} />
+            <Caption>{t('sellPackage.expiresOn', { date: i18n.date(expiresOn, 'long') })}</Caption>
+          </>
+        ) : null}
 
         <Spacer size={space.lg} />
         <Card>
-          <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
-            <View>
-              <Heading>Total</Heading>
-              <Caption>Credited to Deferred Revenue — earned one session at a time.</Caption>
+          <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end', gap: space.md }}>
+            <View style={{ flex: 1 }}>
+              <Heading>{t('sellPackage.total')}</Heading>
+              <Caption>{t('sellPackage.totalExplainer')}</Caption>
             </View>
             <Body>{total === null ? '—' : money(total, currency)}</Body>
           </Row>
@@ -163,7 +221,7 @@ export default function SellPackageScreen() {
 
         <Spacer size={space.xl} />
         <Button
-          label="Issue invoice"
+          label={t('sellPackage.issue')}
           tone="primary"
           onPress={() => { void issue(); }}
           disabled={total === null || creditCount === null || creditCount < 1 || description.trim() === ''}
@@ -172,15 +230,4 @@ export default function SellPackageScreen() {
       </ScrollView>
     </Screen>
   );
-}
-
-function describe(cause: unknown): string {
-  if (cause instanceof NetworkError) {
-    return 'No connection. An invoice number has to come from the server, so this one cannot be issued yet.';
-  }
-  if (cause instanceof ApiError) {
-    const fields = cause.fields ? Object.values(cause.fields) : [];
-    return fields[0] ?? cause.message;
-  }
-  return cause instanceof Error ? cause.message : 'Something went wrong.';
 }

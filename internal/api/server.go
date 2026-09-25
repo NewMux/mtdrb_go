@@ -11,14 +11,20 @@ import (
 
 	"github.com/NewMux/mtdrb_go/internal/auth"
 	"github.com/NewMux/mtdrb_go/internal/billing"
+	"github.com/NewMux/mtdrb_go/internal/catalog"
 	"github.com/NewMux/mtdrb_go/internal/config"
 	"github.com/NewMux/mtdrb_go/internal/crm"
 	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
+	"github.com/NewMux/mtdrb_go/internal/legal"
 	"github.com/NewMux/mtdrb_go/internal/media"
+	"github.com/NewMux/mtdrb_go/internal/platform/clock"
+	"github.com/NewMux/mtdrb_go/internal/platform/ratelimit"
 	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
+	"github.com/NewMux/mtdrb_go/internal/settings"
+	"github.com/NewMux/mtdrb_go/internal/subscription"
 	"github.com/NewMux/mtdrb_go/internal/sync"
 )
 
@@ -32,16 +38,21 @@ type Server struct {
 
 // Deps are the collaborators the router mounts.
 type Deps struct {
-	Auth        *auth.Handler
-	CRM         *crm.Handler
-	Media       *media.Handler
-	Scheduling  *scheduling.Handler
-	Billing     *billing.Handler
-	Programming *programming.Handler
-	Sync        *sync.Handler
-	Dashboard   *dashboard.Handler
+	Auth         *auth.Handler
+	CRM          *crm.Handler
+	Media        *media.Handler
+	Scheduling   *scheduling.Handler
+	Billing      *billing.Handler
+	Programming  *programming.Handler
+	Sync         *sync.Handler
+	Dashboard    *dashboard.Handler
+	Settings     *settings.Handler
+	Catalog      *catalog.Handler
+	Subscription *subscription.Handler
 	// TokenIssuer is used by the authentication middleware.
 	TokenIssuer *auth.TokenIssuer
+	// Clock decides when a trial has lapsed.
+	Clock clock.Clock
 }
 
 // New builds the server and its route table.
@@ -61,9 +72,13 @@ func (s *Server) routes(deps Deps) chi.Router {
 	// wraps everything that can panic, and security headers apply even to
 	// error responses produced further up.
 	r.Use(httpx.RequestID)
+	r.Use(httpx.RealIP(s.cfg.TrustProxy))
 	r.Use(httpx.AccessLog(s.log))
 	r.Use(httpx.Recoverer)
 	r.Use(httpx.SecurityHeaders)
+	if s.cfg.IsProduction() {
+		r.Use(httpx.StrictTransportSecurity)
+	}
 	r.Use(httpx.CORS(s.cfg.CORSOrigins))
 
 	r.Get("/healthz", s.healthz)
@@ -73,7 +88,20 @@ func (s *Server) routes(deps Deps) chi.Router {
 	// entirely: the whole point is that a client with no account can open the
 	// link their trainer sent them. Access is controlled by the unguessable
 	// token, and the payload is deliberately narrow.
-	r.Mount("/public", deps.Billing.PublicRoutes())
+	//
+	// The token cannot be guessed, but it can be tried: a caller walking
+	// random tokens gets a handful a minute, not thousands. A client opening
+	// the link their trainer sent never notices.
+	r.With(httpx.RateLimit(ratelimit.New(20, 3*time.Second, nil))).
+		Mount("/public", deps.Billing.PublicRoutes())
+
+	// The privacy policy and terms, at the stable URLs the store listings
+	// and the app link to.
+	r.Mount("/legal", legal.Routes(legal.Operator{
+		Entity: s.cfg.LegalEntity, Address: s.cfg.LegalAddress, ContactEmail: s.cfg.LegalContactEmail,
+		Jurisdiction: s.cfg.LegalJurisdiction, Effective: s.cfg.LegalEffective,
+		PurgeDays: int(s.cfg.AccountPurgeAfter.Hours() / 24),
+	}))
 
 	r.Route("/v1", func(v1 chi.Router) {
 		// Unauthenticated: obtaining credentials in the first place.
@@ -82,46 +110,62 @@ func (s *Server) routes(deps Deps) chi.Router {
 		// Everything else requires a valid access token.
 		v1.Group(func(private chi.Router) {
 			private.Use(auth.Authenticate(deps.TokenIssuer))
+
+			// What a lapsed account still needs: signing in and out, its
+			// security, its settings and the plan itself.
 			private.Mount("/session", deps.Auth.AuthenticatedRoutes())
-
-			// Media is reachable by both trainers and portal clients; the
-			// handler binds the portal client id so row-level security
-			// narrows each caller to what they may see.
-			private.Mount("/media", deps.Media.Routes())
-
-			// Trainer-only. RequireTrainer rejects portal sessions at the
-			// route boundary, before any handler runs, so a client token
-			// cannot reach another client's record even if a handler were
-			// to forget its own check.
 			private.Group(func(trainer chi.Router) {
 				trainer.Use(httpx.RequireTrainer)
-				trainer.Mount("/clients", deps.CRM.Routes())
-				trainer.Mount("/waivers", deps.CRM.WaiverRoutes())
-				trainer.Mount("/sessions", deps.Scheduling.Routes())
-				trainer.Mount("/credits", deps.Scheduling.CreditRoutes())
-
-				// Money endpoints carry idempotency, so the offline outbox
-				// can retry a payment without recording it twice.
-				trainer.Group(func(m chi.Router) {
-					m.Use(httpx.Idempotent(s.pool))
-					m.Mount("/invoices", deps.Billing.InvoiceRoutes())
-				})
-				trainer.Mount("/payment-methods", deps.Billing.PaymentMethodRoutes())
-				trainer.Mount("/receivables", deps.Billing.ReceivablesRoutes())
-				trainer.Mount("/programs", deps.Programming.ProgramRoutes())
-
-				// Trainer-only: it carries revenue and receivables, which a
-				// portal client must never see.
-				trainer.Mount("/dashboard", deps.Dashboard.Routes())
+				trainer.Mount("/settings", deps.Settings.Routes())
+				trainer.Mount("/subscription", deps.Subscription.Routes())
 			})
 
-			// Reachable by portal clients too: logging your own sets is the
-			// point of the companion app, and the library is what tells you
-			// what the movement is. Row-level security narrows both.
-			private.Group(func(shared chi.Router) {
-				shared.Mount("/exercises", deps.Programming.ExerciseRoutes())
-				shared.Mount("/workouts", deps.Programming.WorkoutRoutes())
-				shared.Mount("/sync", deps.Sync.Routes())
+			// Everything below is read-only once a trial or plan has lapsed:
+			// the records stay readable, and writes wait for a renewal.
+			private.Group(func(guarded chi.Router) {
+				guarded.Use(subscription.ReadOnlyWhenLapsed(deps.Clock))
+
+				// Media is reachable by both trainers and portal clients; the
+				// handler binds the portal client id so row-level security
+				// narrows each caller to what they may see.
+				guarded.Mount("/media", deps.Media.Routes())
+
+				// Trainer-only. RequireTrainer rejects portal sessions at the
+				// route boundary, before any handler runs, so a client token
+				// cannot reach another client's record even if a handler were
+				// to forget its own check.
+				guarded.Group(func(trainer chi.Router) {
+					trainer.Use(httpx.RequireTrainer)
+					trainer.Mount("/clients", deps.CRM.Routes())
+					trainer.Mount("/waivers", deps.CRM.WaiverRoutes())
+					trainer.Mount("/sessions", deps.Scheduling.Routes())
+					trainer.Mount("/credits", deps.Scheduling.CreditRoutes())
+
+					// Money endpoints carry idempotency, so the offline outbox
+					// can retry a payment without recording it twice.
+					trainer.Group(func(m chi.Router) {
+						m.Use(httpx.Idempotent(s.pool))
+						m.Mount("/invoices", deps.Billing.InvoiceRoutes())
+					})
+					trainer.Mount("/payment-methods", deps.Billing.PaymentMethodRoutes())
+					trainer.Mount("/receivables", deps.Billing.ReceivablesRoutes())
+					trainer.Mount("/programs", deps.Programming.ProgramRoutes())
+					trainer.Mount("/locations", deps.Catalog.LocationRoutes())
+					trainer.Mount("/package-offers", deps.Catalog.OfferRoutes())
+
+					// Trainer-only: it carries revenue and receivables, which a
+					// portal client must never see.
+					trainer.Mount("/dashboard", deps.Dashboard.Routes())
+				})
+
+				// Reachable by portal clients too: logging your own sets is the
+				// point of the companion app, and the library is what tells you
+				// what the movement is. Row-level security narrows both.
+				guarded.Group(func(shared chi.Router) {
+					shared.Mount("/exercises", deps.Programming.ExerciseRoutes())
+					shared.Mount("/workouts", deps.Programming.WorkoutRoutes())
+					shared.Mount("/sync", deps.Sync.Routes())
+				})
 			})
 		})
 	})

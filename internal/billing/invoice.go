@@ -426,16 +426,17 @@ func (s *Service) Issue(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Issu
 			continue
 		}
 		credits := *l.PackageCredits * l.Quantity
-		// The per-credit price is what drives revenue recognition on each
-		// delivered session, so it is derived from this line rather than
-		// from any tenant-level default.
-		unitPrice := money.New(l.AmountMinor/int64(credits), invoice.Currency)
+		// The pack is worth exactly what this line credited to Deferred
+		// Revenue. Grant derives the per-credit price from it and the
+		// emptying credit carries what does not divide, so the liability
+		// drains to zero rather than to a few stranded minor units.
+		value := money.New(l.AmountMinor, invoice.Currency)
 		if _, err := s.Grant(ctx, tx, tenantID, GrantInput{
 			ClientID:    invoice.ClientID,
 			InvoiceID:   &invoice.ID,
 			Name:        l.Description,
 			Credits:     credits,
-			UnitPrice:   unitPrice,
+			Value:       &value,
 			PurchasedOn: issueDate,
 			ExpiresAt:   l.CreditsExpireOn,
 		}); err != nil {

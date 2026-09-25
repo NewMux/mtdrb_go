@@ -4,27 +4,34 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/NewMux/mtdrb_go/internal/api"
-	"github.com/NewMux/mtdrb_go/internal/auth"
-	"github.com/NewMux/mtdrb_go/internal/billing"
+	"github.com/NewMux/mtdrb_go/internal/app"
 	"github.com/NewMux/mtdrb_go/internal/config"
-	"github.com/NewMux/mtdrb_go/internal/crm"
-	"github.com/NewMux/mtdrb_go/internal/dashboard"
 	"github.com/NewMux/mtdrb_go/internal/db"
-	"github.com/NewMux/mtdrb_go/internal/ledger"
+	"github.com/NewMux/mtdrb_go/internal/mail"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
+	"github.com/NewMux/mtdrb_go/internal/platform/errreport"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
-	"github.com/NewMux/mtdrb_go/internal/programming"
-	"github.com/NewMux/mtdrb_go/internal/scheduling"
-	"github.com/NewMux/mtdrb_go/internal/sync"
 )
 
 func main() {
+	// The image has no shell and no curl, so the container's health check is
+	// this binary asking itself.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := healthcheck(); err != nil {
+			fmt.Fprintf(os.Stderr, "api: unhealthy: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "api: %v\n", err)
 		os.Exit(1)
@@ -38,6 +45,12 @@ func run() error {
 	}
 
 	log := logger.New(logger.ParseLevel(cfg.LogLevel), logger.Format(cfg.LogFormat))
+	report, flush, err := errreport.Setup(cfg.SentryDSN, cfg.Env, cfg.Release, "api")
+	if err != nil {
+		return err
+	}
+	defer flush()
+	log = logger.WithReporter(log, report)
 
 	// Cancelled on SIGINT/SIGTERM, which starts a graceful drain rather than
 	// dropping in-flight requests — a request mid-ledger-post should finish.
@@ -45,25 +58,17 @@ func run() error {
 	defer stop()
 
 	pool, err := db.Open(ctx, db.PoolConfig{
-		URL:             cfg.DatabaseURL,
-		MaxConns:        cfg.DBMaxConns,
-		MinConns:        cfg.DBMinConns,
-		MaxConnLifetime: cfg.DBConnMaxLife,
-		StatementCache:  cfg.DBStatementCache,
+		URL:              cfg.DatabaseURL,
+		MaxConns:         cfg.DBMaxConns,
+		MinConns:         cfg.DBMinConns,
+		MaxConnLifetime:  cfg.DBConnMaxLife,
+		StatementCache:   cfg.DBStatementCache,
+		StatementTimeout: cfg.DBStatementTimeout,
 	})
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
-
-	wall := clock.System{}
-	issuer := auth.NewTokenIssuer(cfg.JWTSigningKey, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, wall)
-
-	// Signup provisions the tenant's chart of accounts in the same transaction
-	// that creates the tenant: a tenant that cannot post is not a usable one.
-	ledgerSvc := ledger.NewService(wall)
-	programmingSvc := programming.NewService(wall)
-	authSvc := auth.NewService(pool, issuer, ledgerSvc, programmingSvc, wall, auth.DefaultArgon2Params())
 
 	presigner, err := media.NewS3Presigner(media.S3Config{
 		Endpoint:  cfg.StorageEndpoint,
@@ -77,31 +82,64 @@ func run() error {
 		return err
 	}
 	// Fail at startup rather than on the first progress photo.
-	if err := presigner.EnsureBucket(ctx, cfg.StorageRegion); err != nil {
+	if err := presigner.EnsureBucket(ctx, cfg.StorageRegion, cfg.StorageCreateBucket); err != nil {
 		return err
 	}
 
-	crmSvc := crm.NewService(wall, cfg.ColumnEncryptionKey)
-	mediaSvc := media.NewService(presigner, wall, cfg.PresignTTL)
-	billingSvc := billing.NewService(ledgerSvc, wall)
-	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
+	// Password-reset links go out over SMTP; with no mail server configured
+	// (development only — config refuses it in production) they are logged.
+	var mailer mail.Sender = mail.LogSender{Log: log}
+	if cfg.SMTPHost != "" {
+		mailer = mail.SMTPSender{
+			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
+			Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.MailFrom,
+			TLS: cfg.SMTPTLS,
+		}
+	}
 
-	srv := api.New(cfg, pool, log, api.Deps{
-		Auth:        auth.NewHandler(authSvc),
-		CRM:         crm.NewHandler(crmSvc, pool),
-		Media:       media.NewHandler(mediaSvc, pool),
-		Scheduling:  scheduling.NewHandler(schedulingSvc, billingSvc, pool),
-		Billing:     billing.NewHandler(billingSvc, pool, cfg.PublicBaseURL),
-		Programming: programming.NewHandler(programmingSvc, pool),
-		Sync: sync.NewHandler(sync.NewService(wall), pool, sync.Dependencies{
-			CRM:         crmSvc,
-			Scheduling:  schedulingSvc,
-			Billing:     billingSvc,
-			Programming: programmingSvc,
-		}),
-		Dashboard:   dashboard.NewHandler(dashboard.NewService(billingSvc, ledgerSvc, wall), pool),
-		TokenIssuer: issuer,
+	services := app.New(app.Options{
+		Pool:            pool,
+		Clock:           clock.System{},
+		JWTSigningKey:   cfg.JWTSigningKey,
+		AccessTokenTTL:  cfg.AccessTokenTTL,
+		RefreshTokenTTL: cfg.RefreshTokenTTL,
+		ColumnKey:       cfg.ColumnEncryptionKey,
+		Presigner:       presigner,
+		Storage:         presigner,
+		PurgeAfter:      cfg.AccountPurgeAfter,
+		PresignTTL:      cfg.PresignTTL,
+		PublicBaseURL:   cfg.PublicBaseURL,
+		Mailer:          mailer,
+		AppURL:          cfg.AppURL,
+		SecureCookies:   cfg.IsProduction() || strings.HasPrefix(cfg.PublicBaseURL, "https://"),
 	})
+	srv := api.New(cfg, pool, log, services.Handlers())
 
 	return srv.Run(ctx)
+}
+
+// healthcheck asks the running API on this machine whether it is ready.
+func healthcheck() error {
+	addr := os.Getenv("HTTP_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readyz answered %d", resp.StatusCode)
+	}
+	return nil
 }

@@ -1,30 +1,109 @@
 # CoachPulse — Build Status
 
-**Branch:** `claude/charming-lamport-mlpjxw` · **Last updated:** 2026-09-19
+**Branch:** `claude/charming-heisenberg-973web` · **Last updated:** 2026-09-25
 
-**PRD Phase 1 is complete**, and — as of this revision — actually verified
-end to end: the client's own sync engine, outbox and API client driven against
-a running server, not against each other's stubs.
+**Ready to launch**, pending what only the operator can supply: a domain, the
+database and bucket, store accounts, and a lawyer's read of the privacy
+policy and terms. [LAUNCH.md](LAUNCH.md) is the runbook, and its first table
+is the list of those things.
 
-That last step mattered. It found five bugs in a system whose two halves each
-had a green test suite. See [the bugs table](#bugs-the-tests-caught).
-
-To run it yourself: [RUNNING.md](RUNNING.md).
+The production deployment ran end to end in Docker, in production mode,
+behind TLS. It signed up, signed in, uploaded through presigned URLs,
+downloaded and deleted, and the web build signed in and stayed signed in
+across a reload. Getting there found a bug that would have stopped anyone
+signing in on a managed Postgres; see
+[what launch preparation found](#what-launch-preparation-found).
 
 | | |
 |---|---|
-| Milestones done | 8 of 8 |
-| Server tests | 186, green under `-race` |
-| Client tests | 74 offline, plus 7 against a live server |
-| Production Go | ~12,700 lines |
-| Test Go | ~7,400 lines |
-| Migrations | 7, each verified to roll back and reapply |
-| Tables | 35, every one under row-level security |
-| Client routes | 14, every one bundles |
+| Server tests | 263 test functions, green under `-race`, on a superuser-migrated database and on one migrated the way production is |
+| Client tests | 137, plus 7 against a live server |
+| Production Go | ~20,400 lines |
+| Test Go | ~11,500 lines |
+| Migrations | 15, each verified to roll back and reapply |
+| Tables | 39, every one under forced row-level security |
+| Client routes | 31, every one bundles, on Expo SDK 57 |
 
 ---
 
-## What was built
+## Since Phase 1
+
+### Product (September 20–23)
+
+Built on a separate branch and brought together here:
+
+- **Foundations.** Pack revenue no longer strands a rounding remainder. The
+  API contract is enforced: every route must be in `api/openapi.yaml`, and
+  the client's wire types are generated from it. Money renders in its
+  currency's precision.
+- **Design system and shell.** Light and dark, English and Arabic
+  (right-to-left), and one navigation that serves the gym floor and the desk.
+- **The demo is recorded from the real API**, byte for byte reproducible,
+  and replays in the browser with no server.
+- **Settings and account security.** Two-step sign-in, recovery codes,
+  password reset by email, the devices list, and rate limits. Plans are
+  state only, and a lapsed account goes read-only.
+- **The worker**, with a leader lock, idempotent claims, and pack expiry at
+  each practice's midnight.
+- **Locations and a price list; onboarding and VAT** for the Gulf states.
+- **Expo SDK 57**, merged in from its own branch.
+
+### Launch preparation (September 25)
+
+- **Configuration refuses to launch like a laptop.** `APP_ENV` must be set.
+  Production refuses:
+  - the example keys, or one key used for both jobs;
+  - a database connection without enforced TLS;
+  - localhost URLs;
+  - plaintext mail;
+  - missing legal details.
+- **Media.** Upload URLs sign content type and length. Confirming an upload
+  checks the real store. The API never creates a bucket in production, and
+  refuses a public one. The presigner has run against a live S3 server.
+- **Server hardening.**
+  - The client address comes from the right-most proxy hop.
+  - Public invoice links are rate limited.
+  - HSTS is on.
+  - Postgres enforces `statement_timeout`.
+  - SMTP requires TLS.
+  - Housekeeping deletes expired sessions and keys.
+  - Error-level logs can go to Sentry, redacted.
+- **Account deletion**, which both stores require. It deactivates at once,
+  and after 30 days the worker purges every row and file. This is the one
+  narrow exception to the append-only ledger, and the app role cannot use it.
+- **Privacy policy and terms** at `/legal/privacy` and `/legal/terms`.
+- **Docker deployment.** One server image, migrations before every start,
+  and Caddy for TLS on one origin. It works with managed Postgres and S3/R2,
+  or on a single box. CI builds the images and publishes on release tags.
+- **The app for the stores.**
+  - A delete-account screen, which also clears the device.
+  - Links to the legal pages.
+  - Unbuilt modules hidden, and the plan screen no longer sells them.
+  - Icons and a splash screen.
+  - `eas.json`, and a production build that refuses a missing or
+    non-https API URL.
+  - A crash screen instead of a white page.
+
+### What launch preparation found
+
+| Found | What would have happened |
+|---|---|
+| Every SECURITY DEFINER function belonged to the migrating role, and every table forces RLS on its owner. Only a superuser reads past that, and dev and CI migrated as one | On any managed Postgres, **nobody could sign in**: sign-in, refresh, password reset and shared invoices all failed. Found by migrating as an ordinary owner; seven API tests failed. The functions now belong to a `NOLOGIN` definer role, and CI migrates like production |
+| The development role script granted default privileges for the role named `postgres` | A managed database's owner is rarely called that, so the app role would have had no rights at all |
+| Presigned uploads signed neither type nor size | Any client could put an HTML page, or a gigabyte, at a key served as a progress photo |
+| `EnsureBucket` created missing buckets, and never checked the policy its comment promised to | A typo in the bucket name would have created an empty second bucket. A public bucket would have started without complaint |
+| `TRUST_PROXY` believed the left-most `X-Forwarded-For` | Behind a proxy, a guesser picks a fresh address for every sign-in attempt. Waiver signatures recorded the proxy's own address |
+| STARTTLS only "when offered" | Anyone on the path strips the offer and reads reset links in the clear |
+| An unset `APP_ENV` meant development | Forgetting one variable switched every production check off |
+| The `.env.example` keys pass the 32-byte check | A server signing tokens with a key published in the repository |
+| Caddy would not start with an empty ACME email | The first production deploy fails at the proxy |
+| `minio/minio` no longer pulls | `make up` was broken for anyone without a cached image. Development and single-box installs now use SeaweedFS |
+| A release build with no API URL falls back to `http://localhost` | The store build looks permanently offline on every phone |
+| Nothing ever deleted expired refresh tokens, reset links or idempotency keys | Tables on the sign-in path grow for ever |
+
+---
+
+## Phase 1, as built (September 18–19)
 
 ### M0 — Foundation
 
@@ -207,7 +286,7 @@ created.
 
 ---
 
-## Bugs the tests caught
+### Bugs the tests caught in Phase 1
 
 Worth recording, because each was a real defect in shipped-looking code:
 
@@ -222,7 +301,7 @@ Worth recording, because each was a real defect in shipped-looking code:
 | M7 | A single global sync cursor advanced past rows in other collections — data would have **silently never synced** |
 | M7 | `withTransactionAsync` resolves to `void`, so the driver's `transaction()` returned undefined where callers expected a value |
 
-### The five the live run caught
+#### The five the live run caught
 
 Running the client against a real server for the first time found these. Every
 one had passed both suites, because each side's tests asserted a wire format
@@ -255,83 +334,62 @@ replaced by a plan/apply split so the journal link is written at insert.
 
 ---
 
+
+---
+
 ## What should be done next
 
-### 1. M5.5 — Jobs and the worker *(the largest remaining gap)*
+### Before or soon after launch
 
-`cmd/worker` is a stub and `internal/jobs/` is empty. Needs advisory-lock
-leader election, then:
+- **A payment provider.** Plans are set by hand with `cmd/admin`. The
+  `subscription.Provider` interface is waiting. Selling to businesses
+  outside the app keeps App Store rule 3.1.3 on our side.
+- **Data export.** The terms and deletion flow ask trainers to keep what
+  they need for their taxes; a CSV of the books would make that one tap.
+- **Abandoned uploads.** Unconfirmed media rows are never swept, and neither
+  are their objects.
+- **Rate limits across instances.** The limiters are per process, which is
+  right for one API container and generous for several.
+- **Crash reporting inside the app.** The server reports to Sentry; the
+  app has a crash screen but sends nothing.
 
-- Recurring invoice drafts (PRD 4.1)
-- Package expiry sweeps — `billing.ExpirePackages` exists and is unit-tested
-  but nothing calls it on a schedule
-- Overdue reminders (PRD Phase 3)
+### Hidden until built
 
-### 2. Close the known gaps
+- **Calendar and booking.** Creating and rescheduling sessions is still
+  server-only. It was a phone tab, so it is the first to bring back.
+- **The programme builder.** The server side is complete (M6).
+- **Analytics, insights, tasks, the shop.** The plan tiers already gate them.
 
-- **`media.S3Presigner` has never run against a live bucket.** It compiles and
-  the media service is covered by API tests using a fake presigner, but Docker
-  is unavailable in this sandbox and the MinIO download is proxy-blocked. This
-  is the single largest untested surface.
-- **Responses still send dates as timestamps.** Requests now accept
-  `YYYY-MM-DD` and the sync pull emits it (Postgres `to_jsonb` renders a date
-  column that way), but the REST response structs still hold `time.Time`, so
-  the same column reads back differently depending on the endpoint. Cosmetic —
-  every client parses both — but the spec says one thing and two code paths say
-  another.
-- **PDF invoice export.** Deliberately deferred; the share page is one HTML
-  template so PDF renders the same source rather than a second layout
-  ([ADR 0006](docs/adr/0006-invoice-pdf-rendering.md)).
+### Carried over
 
-### 3. Screens the PRD asks for that are not built
-
-- The **programme builder** — mesocycles, blocks, days and prescriptions. The
-  whole server side exists (M6) and the client can log against a programme, but
-  building one is a sit-down, wide-screen job and wants the desktop web layout
-  rather than a phone.
-- **Financial reporting** — P&L, trial balance, receivables ageing. The ledger
-  computes all of it; nothing displays it.
-- **Calendar and booking** — the client mirrors sessions and marks attendance,
-  but creating and rescheduling a session is still server-only.
-
-### 4. PRD Phase 2 and 3
-
-Expense entry and receipt capture (accounts and posting rules already seeded,
-so this is additive), tax-ready CSV export, two-way Google/Apple calendar sync,
-the client companion portal (tokens and policies are designed and tested; the
-screens are not built), multi-currency.
+- Responses still send dates as timestamps where the spec says `date`.
+- PDF invoices ([ADR 0006](docs/adr/0006-invoice-pdf-rendering.md)).
+- Recurring invoice drafts and overdue reminders, for the worker.
 
 ---
 
 ## Running it
 
+[RUNNING.md](RUNNING.md) for development, [LAUNCH.md](LAUNCH.md) for
+production.
+
 ```bash
-# Postgres (Docker is unavailable in this sandbox, so a direct cluster)
-pg_ctl -D /var/lib/postgresql/coachpulse-test -o '-p 5432 -k /tmp -h 127.0.0.1' start
-make migrate
-
-make test                                  # unit
-make test-integration                      # RLS, ledger, journeys
-make verify                                # everything CI runs for the server
-
-make app-install                           # once
-make app-start                             # Expo dev server
-make app-verify                            # typecheck, tests, bundle every route
-
-# The whole loop, client against a running server. Skipped unless the
-# variable is set, so CI stays hermetic. This is the one that found the
-# four bugs above.
-cd app && COACHPULSE_LIVE_API=http://127.0.0.1:8080 npx jest live
+make verify              # Go: format, vet, lint, unit tests
+make test-integration    # RLS, ledger, journeys, deletion, jobs (needs Postgres)
+make app-verify          # client: typecheck, tests, bundle every route
 ```
 
-The client reads `EXPO_PUBLIC_API_URL`, falling back to `expo.extra.apiBaseUrl`
-in `app/app.json`. On a phone this must be the LAN address of the machine
-running `make run` — `localhost` on a phone is the phone.
-[RUNNING.md](RUNNING.md) has the full walkthrough.
+Two integration runs are worth knowing about. The first is the live S3
+test, which is skipped unless a store is given:
 
-Integration tests need `-p 1`: they share one database and reset it between
-tests, so concurrent packages corrupt each other's assertions.
+```bash
+STORAGE_TEST_ENDPOINT=localhost:9000 STORAGE_TEST_ACCESS_KEY=minioadmin \
+STORAGE_TEST_SECRET_KEY=minioadmin go test ./internal/media -run RealStore
+```
+
+The second is the suite against a database set up like production: an
+owner that is not a superuser, and the app role from
+`deploy/provision.sql`. CI does this on every push.
 
 Start with [ADR 0001 (ledger)](docs/adr/0001-double-entry-ledger.md) and
-[ADR 0002 (tenant isolation)](docs/adr/0002-tenant-isolation-via-rls.md) —
-they constrain everything else.
+[ADR 0002 (tenant isolation)](docs/adr/0002-tenant-isolation-via-rls.md).

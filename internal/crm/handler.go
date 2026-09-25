@@ -1,7 +1,6 @@
 package crm
 
 import (
-	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -457,7 +456,7 @@ func (h *Handler) signWaiver(w http.ResponseWriter, r *http.Request) {
 			ClientID:   clientID,
 			SignedName: req.SignedName,
 			MediaID:    req.MediaID,
-			IP:         clientIP(r),
+			IP:         httpx.ClientAddress(r),
 		})
 		if err != nil {
 			return err
@@ -557,16 +556,4 @@ func atoiOr(raw string, def int) int {
 		return def
 	}
 	return n
-}
-
-// clientIP reports the caller's address for the signature record.
-//
-// Proxy headers are deliberately not trusted: they are trivially forged, and
-// a forged address in an evidentiary record is worse than no address at all.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

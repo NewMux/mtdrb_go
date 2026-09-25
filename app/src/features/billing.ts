@@ -25,6 +25,13 @@ export interface PackageSale {
   credits: number;
   /** Price of one session, in minor units. */
   unitPriceMinor: number;
+  /**
+   * The whole pack's price, when it is sold as one — from a price-list
+   * offer, say. 3,500.00 for 10 is not 350.00 × 10 once VAT or a discount
+   * is involved, and the server carries the part that does not divide onto
+   * the pack's last session rather than losing it.
+   */
+  packPriceMinor?: number;
   currency?: string;
   dueDate?: string | null;
   expiresOn?: string | null;
@@ -56,9 +63,9 @@ export async function sellPackage(
       // set the per-credit price to a tenth of the real one, so each delivered
       // session recognised a tenth of the revenue and Deferred Revenue never
       // drained.
-      quantity: sale.credits,
-      unit_price_minor: sale.unitPriceMinor,
-      package_credits: 1,
+      ...(sale.packPriceMinor !== undefined
+        ? { quantity: 1, unit_price_minor: sale.packPriceMinor, package_credits: sale.credits }
+        : { quantity: sale.credits, unit_price_minor: sale.unitPriceMinor, package_credits: 1 }),
       credits_expire_on: sale.expiresOn ?? null,
     }],
   }, draftKey);

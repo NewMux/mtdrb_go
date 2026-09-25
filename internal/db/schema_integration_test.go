@@ -118,3 +118,34 @@ func TestSecurityDefinerFunctionsPinSearchPath(t *testing.T) {
 		t.Fatal("expected the auth lookup functions to be SECURITY DEFINER")
 	}
 }
+
+// A SECURITY DEFINER function owned by the migrating role runs under that
+// role's forced row-level security and, on a managed Postgres where the owner
+// is not a superuser, sees no tenant at all: sign-in found no one. CI
+// migrates as a superuser, which hides it, so ownership is asserted instead.
+func TestSecurityDefinerFunctionsBelongToTheDefinerRole(t *testing.T) {
+	testsupport.RequireDB(t)
+	owner := testsupport.OpenOwner(t)
+	rows, err := owner.Raw().Query(context.Background(), `
+		SELECT p.oid::regprocedure::text, pg_get_userbyid(p.proowner)
+		  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+		 WHERE n.nspname = 'public' AND p.prosecdef`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var fn, fnOwner string
+		if err := rows.Scan(&fn, &fnOwner); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if fnOwner != "coachpulse_definer" {
+			t.Errorf("%s is owned by %s; hand it to coachpulse_definer (see the definer_role migration)", fn, fnOwner)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no SECURITY DEFINER functions found; the query is wrong")
+	}
+}

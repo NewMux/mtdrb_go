@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{{template "style"}}
+<title>Privacy policy — CoachPulse</title>
+</head>
+<body>
+<main>
+<h1>Privacy policy</h1>
+<p class="muted">Effective {{.Effective}}</p>
+
+<p>CoachPulse is software that independent personal trainers use to run their business: their
+clients, sessions, training programmes, invoices and books. It is operated by {{.Entity}},
+{{.Address}} (“we”). This policy explains what we collect, why, and what you can do about it.</p>
+
+<h2>Two kinds of people, two roles</h2>
+<p><strong>Trainers</strong> hold a CoachPulse account. For their account details we decide what
+is collected and why: we are the <em>controller</em>.</p>
+<p><strong>Their clients</strong> do not need an account. A trainer records details about the people
+they train. For that information the trainer is the controller and we process it on their behalf
+and on their instructions: we are the <em>processor</em>. If you are a client, your trainer is the
+first person to ask about your information; we will help them answer you.</p>
+
+<h2>What we collect</h2>
+<p>From trainers:</p>
+<ul>
+  <li>Account details: name, email address, a password (stored only as a one-way hash), and, if
+  you turn it on, a two-step sign-in secret (stored encrypted).</li>
+  <li>Business details: the practice’s name, country, time zone, currency, tax registration
+  number, VAT settings, locations and price list, and the payment instructions you choose to put
+  on invoices (for example a bank account number).</li>
+  <li>The devices you sign in from, as a list of sessions you can see and end from Settings.</li>
+</ul>
+<p>What trainers record about their clients:</p>
+<ul>
+  <li>Contact details, tags and notes.</li>
+  <li>Health information the trainer collects for safe training: the PAR-Q questionnaire, signed
+  waivers, measurements, and emergency medical notes. Medical notes are encrypted in the
+  database, separately from everything else.</li>
+  <li>Progress photos and other files, kept in private storage and only ever reachable through
+  links that expire within minutes.</li>
+  <li>Sessions, attendance, training programmes and the sets and loads logged in them.</li>
+  <li>Invoices and the payments the trainer records as received. CoachPulse does not take card
+  payments and never sees card details.</li>
+</ul>
+<p>Operational data: server logs of requests (the address and time, never the content of medical
+notes or payment details, which are removed before anything is written), and error reports used
+to fix faults.</p>
+
+<h2>Why we use it</h2>
+<ul>
+  <li>To provide the service a trainer signed up for, which is the legal basis for most of it:
+  performing our contract with the trainer.</li>
+  <li>To keep accounts secure: rate limits on sign-in, two-step sign-in, revoking sessions.</li>
+  <li>To email what the service needs to send, such as a password-reset link. We do not send
+  marketing email without asking.</li>
+  <li>To meet legal obligations, such as keeping a trainer’s tax records intact while their
+  account exists.</li>
+</ul>
+<p>We do not sell personal information, show advertising, or use client health information for
+anything other than providing the service to the trainer who recorded it.</p>
+
+<h2>Who else handles it</h2>
+<p>We use a small number of service providers, under contract and only for running CoachPulse:
+a hosting provider for the servers and database, an object-storage provider for files, an email
+provider for account emails, and an error-reporting service. Each practice’s records are kept
+apart from every other practice’s by the database itself, not only by our code.</p>
+
+<h2>How long we keep it</h2>
+<ul>
+  <li>For as long as the trainer’s account exists.</li>
+  <li>When a trainer deletes their account in the app, nobody can sign in to it from that
+  moment, and everything the practice holds — its clients, records, files and books — is
+  permanently deleted {{.PurgeDays}} days later. The delay exists so a deletion made by mistake
+  can be undone; write to us within it if that happens.</li>
+  <li>Backups roll over: a permanently deleted practice is gone from them within a further 35 days.</li>
+  <li>Expired sign-in sessions and reset links are deleted automatically.</li>
+</ul>
+
+<h2>Your rights</h2>
+<p>Depending on where you live, you may have the right to access, correct, delete or export your
+information, to object to or restrict how it is used, and to complain to a data protection
+authority. Trainers can correct their details and delete their account from Settings in the app.
+Clients should contact their trainer first. Anyone may write to us at
+<a href="mailto:{{.ContactEmail}}">{{.ContactEmail}}</a>; we answer within 30 days.</p>
+
+<h2>Security</h2>
+<p>Connections are encrypted. Passwords are hashed with Argon2id. Medical notes and two-step
+secrets are encrypted at rest. Each practice’s records are isolated by row-level security in
+the database, and files are private. No system is perfectly secure; if a breach affects your
+information we will tell you and the authorities as the law requires.</p>
+
+<h2>Children</h2>
+<p>CoachPulse accounts are for adults running a business. A trainer who trains minors is
+responsible for having the consent of a parent or guardian for what they record.</p>
+
+<h2>Changes</h2>
+<p>If we change this policy in a way that matters, we will say so in the app before the change
+takes effect. The date at the top is when the current version started.</p>
+
+<h2>Contact</h2>
+<p>{{.Entity}}, {{.Address}}. <a href="mailto:{{.ContactEmail}}">{{.ContactEmail}}</a></p>
+</main>
+<footer class="muted"><a href="terms">Terms of service</a></footer>
+</body>
+</html>

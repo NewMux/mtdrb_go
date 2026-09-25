@@ -30,6 +30,13 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The code a demo build answers every write with: there is no server to send
+ * it to. Here rather than in src/demo so a screen can recognise it without
+ * pulling the demo into a normal build.
+ */
+export const DEMO_READ_ONLY = 'demo_read_only';
+
 /** A transport failure — no signal, DNS, a dropped connection. */
 export class NetworkError extends Error {
   constructor(cause: unknown) {
@@ -52,15 +59,26 @@ export interface ClientOptions {
   fetchImpl?: typeof fetch;
   /** Called when refreshing fails and the trainer really must sign in again. */
   onSignedOut?: () => void;
+  /**
+   * Keep the refresh token in an httpOnly cookie rather than the body. The
+   * web build does: a browser has nowhere safe to hold one, and a cookie the
+   * page's scripts cannot read is the least bad place.
+   */
+  cookieTransport?: boolean;
 }
 
-interface RequestOptions {
+/** The sentinel a token store returns for "the refresh token is a cookie". */
+export const COOKIE_REFRESH = 'cookie';
+
+export interface RequestOptions {
   method?: string;
   body?: unknown;
   /** Makes a mutating request safe to retry. */
   idempotencyKey?: string;
   /** Internal: prevents a refresh loop. */
   isRetry?: boolean;
+  /** Ask for, or present, the refresh cookie. */
+  cookie?: boolean;
 }
 
 export class ApiClient {
@@ -83,6 +101,8 @@ export class ApiClient {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
     if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
+    const cookie = opts.cookie && this.options.cookieTransport;
+    if (cookie) headers['X-Refresh-Transport'] = 'cookie';
 
     const token = await this.options.tokens.accessToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -93,6 +113,7 @@ export class ApiClient {
         method: opts.method ?? 'GET',
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        ...(cookie ? { credentials: 'include' as const } : {}),
       });
     } catch (cause) {
       // A transport failure is not the trainer's problem to see; the sync
@@ -140,10 +161,16 @@ export class ApiClient {
         const refreshToken = await this.options.tokens.refreshToken();
         if (!refreshToken) return false;
 
+        const cookie = this.options.cookieTransport === true;
         const response = await this.fetchImpl(this.options.baseUrl + '/v1/auth/refresh', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ refresh_token: refreshToken }),
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            ...(cookie ? { 'X-Refresh-Transport': 'cookie' } : {}),
+          },
+          body: JSON.stringify(cookie ? {} : { refresh_token: refreshToken }),
+          ...(cookie ? { credentials: 'include' as const } : {}),
         });
         if (!response.ok) {
           await this.options.tokens.clear();
@@ -151,7 +178,7 @@ export class ApiClient {
           return false;
         }
         const session = (await response.json()) as SessionResponse;
-        await this.options.tokens.save(session.tokens.access_token, session.tokens.refresh_token);
+        await this.keep(session);
         return true;
       } catch {
         // A network failure during refresh is not a sign-out: the token may
@@ -167,13 +194,61 @@ export class ApiClient {
 
   // -- Authentication -------------------------------------------------------
 
+  /**
+   * Signs in. With two-step sign-in on, this throws an ApiError whose code
+   * is `mfa_required` and whose meta carries the `mfa_token` to pass to
+   * verifyMfa with the code.
+   */
   async login(email: string, password: string): Promise<SessionResponse> {
     const session = await this.request<SessionResponse>('/v1/auth/login', {
       method: 'POST',
       body: { email, password },
+      cookie: true,
     });
-    await this.options.tokens.save(session.tokens.access_token, session.tokens.refresh_token);
+    await this.keep(session);
     return session;
+  }
+
+  async verifyMfa(mfaToken: string, code: string): Promise<SessionResponse> {
+    const session = await this.request<SessionResponse>('/v1/auth/mfa', {
+      method: 'POST',
+      body: { mfa_token: mfaToken, code },
+      cookie: true,
+    });
+    await this.keep(session);
+    return session;
+  }
+
+  /** Accepted whether or not the address has an account. */
+  forgotPassword(email: string): Promise<void> {
+    return this.request<void>('/v1/auth/password/forgot', { method: 'POST', body: { email } });
+  }
+
+  resetPassword(token: string, password: string): Promise<void> {
+    return this.request<void>('/v1/auth/password/reset', { method: 'POST', body: { token, password } });
+  }
+
+  /** Ends this device's session on the server, and forgets its tokens. */
+  async logout(): Promise<void> {
+    try {
+      const refresh = await this.options.tokens.refreshToken();
+      const cookie = this.options.cookieTransport === true;
+      await this.request<void>('/v1/session/logout', {
+        method: 'POST',
+        body: cookie || !refresh ? {} : { refresh_token: refresh },
+        cookie: true,
+        isRetry: true,
+      });
+    } finally {
+      await this.options.tokens.clear();
+    }
+  }
+
+  private async keep(session: SessionResponse): Promise<void> {
+    await this.options.tokens.save(
+      session.tokens.access_token,
+      this.options.cookieTransport ? COOKIE_REFRESH : session.tokens.refresh_token,
+    );
   }
 
   async signup(input: {
@@ -187,17 +262,23 @@ export class ApiClient {
     const session = await this.request<SessionResponse>('/v1/auth/signup', {
       method: 'POST',
       body: input,
+      cookie: true,
     });
-    await this.options.tokens.save(session.tokens.access_token, session.tokens.refresh_token);
+    await this.keep(session);
     return session;
   }
 
   // -- Sync -----------------------------------------------------------------
 
-  pull(cursor: string, limit = 500): Promise<PullResult> {
+  /**
+   * `reset` names collections to restart from the beginning — for a device
+   * whose local schema gained columns its stored rows lack.
+   */
+  pull(cursor: string, limit = 500, reset: readonly string[] = []): Promise<PullResult> {
     const query = new URLSearchParams();
     if (cursor) query.set('cursor', cursor);
     query.set('limit', String(limit));
+    if (reset.length > 0) query.set('reset', reset.join(','));
     return this.request<PullResult>(`/v1/sync/pull?${query.toString()}`);
   }
 
@@ -223,5 +304,13 @@ export class ApiClient {
 
   post<T>(path: string, body: unknown, idempotencyKey?: string): Promise<T> {
     return this.request<T>(path, { method: 'POST', body, idempotencyKey });
+  }
+
+  patch<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>(path, { method: 'PATCH', body });
+  }
+
+  delete(path: string): Promise<void> {
+    return this.request<void>(path, { method: 'DELETE' });
   }
 }

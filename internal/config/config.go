@@ -7,6 +7,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,11 +21,17 @@ type Config struct {
 	HTTPAddr        string        // listen address for the API
 	ShutdownTimeout time.Duration // grace period for in-flight requests
 
-	DatabaseURL      string        // pgx connection string for the RLS-bound app role
-	DBMaxConns       int32         //
-	DBMinConns       int32         //
-	DBConnMaxLife    time.Duration //
-	DBStatementCache bool          //
+	DatabaseURL        string        // pgx connection string for the RLS-bound app role
+	DBMaxConns         int32         //
+	DBMinConns         int32         //
+	DBConnMaxLife      time.Duration //
+	DBStatementCache   bool          //
+	DBStatementTimeout time.Duration // per-statement limit Postgres enforces
+	// DBRequireTLS refuses a DATABASE_URL whose sslmode would let the
+	// connection fall back to plaintext. On by default in production; a
+	// single-box install whose database never leaves a private network may
+	// turn it off explicitly.
+	DBRequireTLS bool
 
 	JWTSigningKey   []byte        // HMAC key for access tokens
 	AccessTokenTTL  time.Duration //
@@ -39,13 +47,51 @@ type Config struct {
 	StorageAccessKey string
 	StorageSecretKey string
 	StorageUseSSL    bool
-	PresignTTL       time.Duration // lifetime of a presigned media URL
+	// StorageCreateBucket lets the API create a missing bucket at startup.
+	// Off by default: production keys should not be able to create buckets.
+	StorageCreateBucket bool
+	PresignTTL          time.Duration // lifetime of a presigned media URL
 
 	PublicBaseURL string // origin used to build invoice share links
 	CORSOrigins   []string
+	// AppURL is where the app itself is served: the origin of the link in a
+	// password-reset email.
+	AppURL string
+	// TrustProxy believes X-Forwarded-For when rate limiting sign-in. Only
+	// behind a load balancer that sets it.
+	TrustProxy bool
+
+	// SMTP sends password-reset emails. With no host, mail is logged instead,
+	// which is only allowed outside production.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPTLS      string // starttls | implicit | none
+	MailFrom     string
 
 	LogLevel  string
 	LogFormat string
+
+	// SentryDSN, when set, sends every error-level log record to Sentry.
+	SentryDSN string
+	// Release names the build in error reports; the image sets it.
+	Release string
+
+	// JobInterval is how often the leading worker looks for due jobs.
+	JobInterval time.Duration
+	// Legal names the operator on the privacy policy and terms. Production
+	// requires the entity, address, contact and jurisdiction: a store
+	// listing must never link to a page of placeholders.
+	LegalEntity       string
+	LegalAddress      string
+	LegalContactEmail string
+	LegalJurisdiction string
+	LegalEffective    string
+
+	// AccountPurgeAfter is the grace period between an owner deleting their
+	// practice and the worker removing it for good.
+	AccountPurgeAfter time.Duration
 }
 
 // IsProduction reports whether relaxed development behaviour must be disabled.
@@ -55,59 +101,164 @@ type loader struct {
 	problems []string
 }
 
-// Load reads configuration from the process environment.
-func Load() (Config, error) {
+// Load reads the API's configuration from the process environment.
+func Load() (Config, error) { return load(true) }
+
+// LoadWorker reads the worker's configuration. The worker signs no tokens,
+// serves no media and sends no reset links, so it does not demand the keys
+// and servers that only the API uses: a worker that refuses to start for
+// want of an object-storage secret it never reads is a deployment chore, not
+// a safety check.
+func LoadWorker() (Config, error) { return load(false) }
+
+func load(api bool) (Config, error) {
 	l := &loader{}
+	required := l.required
+	if !api {
+		required = func(key string) string { return l.str(key, "") }
+	}
 	cfg := Config{
-		Env:             l.str("APP_ENV", "development"),
+		// No default: a production server that forgot APP_ENV would
+		// otherwise come up as development with every check below skipped.
+		Env:             l.required("APP_ENV"),
 		HTTPAddr:        l.str("HTTP_ADDR", ":8080"),
 		ShutdownTimeout: l.dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 
-		DatabaseURL:      l.required("DATABASE_URL"),
-		DBMaxConns:       int32(l.num("DB_MAX_CONNS", 20)),
-		DBMinConns:       int32(l.num("DB_MIN_CONNS", 2)),
-		DBConnMaxLife:    l.dur("DB_CONN_MAX_LIFETIME", time.Hour),
-		DBStatementCache: l.boolean("DB_STATEMENT_CACHE", true),
+		DatabaseURL:        l.required("DATABASE_URL"),
+		DBMaxConns:         int32(l.num("DB_MAX_CONNS", 20)),
+		DBMinConns:         int32(l.num("DB_MIN_CONNS", 2)),
+		DBConnMaxLife:      l.dur("DB_CONN_MAX_LIFETIME", time.Hour),
+		DBStatementCache:   l.boolean("DB_STATEMENT_CACHE", true),
+		DBStatementTimeout: l.dur("DB_STATEMENT_TIMEOUT", 30*time.Second),
 
 		AccessTokenTTL:  l.dur("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: l.dur("REFRESH_TOKEN_TTL", 30*24*time.Hour),
 
-		StorageEndpoint:  l.str("STORAGE_ENDPOINT", "localhost:9000"),
-		StorageRegion:    l.str("STORAGE_REGION", "us-east-1"),
-		StorageBucket:    l.str("STORAGE_BUCKET", "coachpulse"),
-		StorageAccessKey: l.required("STORAGE_ACCESS_KEY"),
-		StorageSecretKey: l.required("STORAGE_SECRET_KEY"),
-		StorageUseSSL:    l.boolean("STORAGE_USE_SSL", false),
-		PresignTTL:       l.dur("PRESIGN_TTL", 5*time.Minute),
+		StorageEndpoint:     l.str("STORAGE_ENDPOINT", "localhost:9000"),
+		StorageRegion:       l.str("STORAGE_REGION", "us-east-1"),
+		StorageBucket:       l.str("STORAGE_BUCKET", "coachpulse"),
+		StorageAccessKey:    required("STORAGE_ACCESS_KEY"),
+		StorageSecretKey:    required("STORAGE_SECRET_KEY"),
+		StorageUseSSL:       l.boolean("STORAGE_USE_SSL", false),
+		StorageCreateBucket: l.boolean("STORAGE_CREATE_BUCKET", false),
+		PresignTTL:          l.dur("PRESIGN_TTL", 5*time.Minute),
 
 		PublicBaseURL: l.str("PUBLIC_BASE_URL", "http://localhost:8080"),
 		CORSOrigins:   l.list("CORS_ORIGINS", "http://localhost:8081"),
+		AppURL:        l.str("APP_URL", "http://localhost:8081"),
+		TrustProxy:    l.boolean("TRUST_PROXY", false),
+
+		SMTPHost:     l.str("SMTP_HOST", ""),
+		SMTPPort:     l.num("SMTP_PORT", 587),
+		SMTPUsername: l.str("SMTP_USERNAME", ""),
+		SMTPPassword: l.str("SMTP_PASSWORD", ""),
+		SMTPTLS:      l.str("SMTP_TLS", ""),
+		MailFrom:     l.str("MAIL_FROM", "CoachPulse <no-reply@coachpulse.io>"),
 
 		LogLevel:  l.str("LOG_LEVEL", "info"),
 		LogFormat: l.str("LOG_FORMAT", "json"),
+
+		SentryDSN: l.str("SENTRY_DSN", ""),
+		Release:   l.str("RELEASE", "dev"),
+
+		JobInterval:       l.dur("JOB_INTERVAL", time.Minute),
+		AccountPurgeAfter: l.dur("ACCOUNT_PURGE_AFTER", 30*24*time.Hour),
+
+		LegalEntity:       l.str("LEGAL_ENTITY", ""),
+		LegalAddress:      l.str("LEGAL_ADDRESS", ""),
+		LegalContactEmail: l.str("LEGAL_CONTACT_EMAIL", ""),
+		LegalJurisdiction: l.str("LEGAL_JURISDICTION", ""),
+		LegalEffective:    l.str("LEGAL_EFFECTIVE", ""),
 	}
 
-	cfg.JWTSigningKey = l.secret("JWT_SIGNING_KEY", 32)
-	cfg.ColumnEncryptionKey = l.secret("COLUMN_ENCRYPTION_KEY", 32)
+	if api {
+		cfg.JWTSigningKey = l.secret("JWT_SIGNING_KEY", 32)
+		cfg.ColumnEncryptionKey = l.secret("COLUMN_ENCRYPTION_KEY", 32)
+	}
 
 	switch cfg.Env {
 	case "development", "staging", "production":
 	default:
 		l.fail("APP_ENV must be development, staging or production, got %q", cfg.Env)
 	}
+	cfg.DBRequireTLS = l.boolean("DB_REQUIRE_TLS", cfg.IsProduction())
+	switch strings.ToLower(cfg.LogLevel) {
+	case "debug", "info", "warn", "warning", "error":
+	default:
+		l.fail("LOG_LEVEL must be debug, info, warn or error, got %q", cfg.LogLevel)
+	}
+	if cfg.LogFormat != "json" && cfg.LogFormat != "text" {
+		l.fail("LOG_FORMAT must be json or text, got %q", cfg.LogFormat)
+	}
+	if cfg.SMTPTLS == "" {
+		cfg.SMTPTLS = "starttls"
+		if cfg.SMTPPort == 465 {
+			cfg.SMTPTLS = "implicit"
+		}
+	}
+	switch cfg.SMTPTLS {
+	case "starttls", "implicit", "none":
+	default:
+		l.fail("SMTP_TLS must be starttls, implicit or none, got %q", cfg.SMTPTLS)
+	}
 	if cfg.DBMinConns > cfg.DBMaxConns {
 		l.fail("DB_MIN_CONNS (%d) exceeds DB_MAX_CONNS (%d)", cfg.DBMinConns, cfg.DBMaxConns)
 	}
-	if cfg.IsProduction() {
+	if cfg.DBRequireTLS && cfg.DatabaseURL != "" {
+		switch mode := sslMode(cfg.DatabaseURL); mode {
+		case "require", "verify-ca", "verify-full":
+		default:
+			l.fail("DATABASE_URL must set sslmode=require, verify-ca or verify-full (got %q); set DB_REQUIRE_TLS=false only for a database on a private network", mode)
+		}
+	}
+	if cfg.IsProduction() && api {
+		if isDevSecret(cfg.JWTSigningKey) {
+			l.fail("JWT_SIGNING_KEY is the development placeholder; generate one with: openssl rand -hex 32")
+		}
+		if isDevSecret(cfg.ColumnEncryptionKey) {
+			l.fail("COLUMN_ENCRYPTION_KEY is the development placeholder; generate one with: openssl rand -hex 32")
+		}
+		if cfg.JWTSigningKey != nil && string(cfg.JWTSigningKey) == string(cfg.ColumnEncryptionKey) {
+			l.fail("JWT_SIGNING_KEY and COLUMN_ENCRYPTION_KEY must differ")
+		}
+		if isLocal(cfg.StorageEndpoint) {
+			l.fail("STORAGE_ENDPOINT must not be localhost in production: presigned URLs are opened by the client's device")
+		}
+		if isLocal(cfg.PublicBaseURL) {
+			l.fail("PUBLIC_BASE_URL must not be localhost in production")
+		}
+		if isLocal(cfg.AppURL) {
+			l.fail("APP_URL must not be localhost in production")
+		}
 		if !cfg.StorageUseSSL {
 			l.fail("STORAGE_USE_SSL must be true in production")
 		}
 		if strings.HasPrefix(cfg.PublicBaseURL, "http://") {
 			l.fail("PUBLIC_BASE_URL must be https in production")
 		}
+		if strings.HasPrefix(cfg.AppURL, "http://") {
+			l.fail("APP_URL must be https in production")
+		}
+		if cfg.SMTPHost == "" {
+			l.fail("SMTP_HOST is required in production: password resets must be delivered, not logged")
+		}
+		for key, v := range map[string]string{
+			"LEGAL_ENTITY": cfg.LegalEntity, "LEGAL_ADDRESS": cfg.LegalAddress,
+			"LEGAL_CONTACT_EMAIL": cfg.LegalContactEmail, "LEGAL_JURISDICTION": cfg.LegalJurisdiction,
+			"LEGAL_EFFECTIVE": cfg.LegalEffective,
+		} {
+			if v == "" {
+				l.fail("%s is required in production: the privacy policy and terms name the operator", key)
+			}
+		}
+		if cfg.SMTPTLS == "none" {
+			l.fail("SMTP_TLS=none is not allowed in production: a reset link sent in the clear is a password sent in the clear")
+		}
 		for _, o := range cfg.CORSOrigins {
 			if o == "*" {
 				l.fail("CORS_ORIGINS must not be a wildcard in production")
+			} else if isLocal(o) {
+				l.fail("CORS_ORIGINS must not include localhost in production, got %q", o)
 			}
 		}
 	}
@@ -205,4 +356,46 @@ func (l *loader) list(key, def string) []string {
 		}
 	}
 	return out
+}
+
+// sslMode extracts sslmode from either form of connection string pgx
+// accepts. Absent, pgx behaves as "prefer", which silently accepts plaintext.
+func sslMode(dsn string) string {
+	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
+		if m := u.Query().Get("sslmode"); m != "" {
+			return m
+		}
+		return "prefer"
+	}
+	for _, field := range strings.Fields(dsn) {
+		if k, v, ok := strings.Cut(field, "="); ok && k == "sslmode" {
+			return strings.Trim(v, "'")
+		}
+	}
+	return "prefer"
+}
+
+// isDevSecret recognises the placeholders .env.example ships with. They are
+// long enough to pass the length check, which is exactly why they need one of
+// their own.
+func isDevSecret(v []byte) bool {
+	s := strings.ToLower(string(v))
+	return strings.Contains(s, "change-me") || strings.Contains(s, "dev-only")
+}
+
+// isLocal reports whether an origin, URL or host:port names this machine.
+func isLocal(raw string) bool {
+	host := raw
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "0.0.0.0" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

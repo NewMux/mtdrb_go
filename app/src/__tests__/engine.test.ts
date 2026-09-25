@@ -281,6 +281,29 @@ describe('synchronise', () => {
     expect(order).toEqual(['pull', 'push']);
   });
 
+  it('holds every operation when the plan has lapsed, rather than parking them', async () => {
+    // A lapsed trial is read-only until it is renewed. The operations are
+    // the trainer's real work; they must still be there, pending, when the
+    // plan comes back — not in "needs attention" as refusals.
+    const { api } = client((url) => {
+      if (url.includes('/sync/pull')) {
+        return { status: 200, body: { cursor: 'c', has_more: false, server_time: '', changes: [] } as PullResult };
+      }
+      return {
+        status: 402,
+        body: { error: { code: 'subscription_inactive', message: 'read-only until renewed' } },
+      };
+    });
+    await outbox.enqueue(db, newId(), 'attendance.mark', {});
+    await outbox.enqueue(db, newId(), 'client.create', {});
+
+    const report = await synchronise(db, api);
+    expect(report.inactive).toBe(true);
+    expect(report.error).toBeUndefined();
+    expect(await outbox.pending(db)).toHaveLength(2);
+    expect(await outbox.needsAttention(db)).toHaveLength(0);
+  });
+
   it('reports being offline as a fact, not an error', async () => {
     // The app is built for basements. Being offline is the normal case and
     // must not surface as a failure.

@@ -24,7 +24,10 @@ const (
 	KindConflict     Kind = "conflict"      // state precondition violated
 	KindUnprocessed  Kind = "unprocessable" // understood but rules forbid it
 	KindRateLimited  Kind = "rate_limited"
-	KindInternal     Kind = "internal"
+	// KindInactive is a request the account's plan no longer allows: a lapsed
+	// trial is read-only until it is renewed.
+	KindInactive Kind = "inactive"
+	KindInternal Kind = "internal"
 )
 
 // Stable machine codes. These are part of the client contract: the Expo app
@@ -48,6 +51,17 @@ const (
 	CodeSchedulingConflict  = "scheduling_conflict"
 	CodeBufferViolation     = "buffer_violation"
 	CodeInternal            = "internal_error"
+
+	// Plans. The app shows an upgrade prompt for the first two and a
+	// read-only banner for the third; the outbox holds its operations on the
+	// third rather than parking them as failed.
+	CodeFeatureNotInPlan     = "feature_not_in_plan"
+	CodePlanLimitReached     = "plan_limit_reached"
+	CodeSubscriptionInactive = "subscription_inactive"
+	CodeMFARequired          = "mfa_required"
+	CodeInvalidMFACode       = "invalid_mfa_code"
+	CodeCurrencyLocked       = "currency_locked"
+	CodeUploadIncomplete     = "upload_incomplete"
 )
 
 // Error is an application error with a transport-mappable Kind.
@@ -131,6 +145,11 @@ func RateLimited(format string, args ...any) *Error {
 	return newf(KindRateLimited, "rate_limited", format, args...)
 }
 
+// Inactive reports a write the account's plan no longer allows.
+func Inactive(format string, args ...any) *Error {
+	return newf(KindInactive, CodeSubscriptionInactive, format, args...)
+}
+
 // Internal wraps an unexpected failure. The cause is logged, never returned
 // to the caller.
 func Internal(err error, format string, args ...any) *Error {
@@ -189,6 +208,8 @@ func HTTPStatus(err error) int {
 		return http.StatusUnprocessableEntity
 	case KindRateLimited:
 		return http.StatusTooManyRequests
+	case KindInactive:
+		return http.StatusPaymentRequired
 	default:
 		return http.StatusInternalServerError
 	}

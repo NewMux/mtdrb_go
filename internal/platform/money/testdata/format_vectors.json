@@ -1,0 +1,50 @@
+{
+  "_comment": "Shared by internal/platform/money (Go) and app/src/__tests__/format.test.ts (TypeScript). Both sides render money; if they disagreed, a receipt and the app would show different amounts for the same payment.",
+  "format": [
+    {
+      "minor": 50000,
+      "currency": "EUR",
+      "want": "500.00 EUR"
+    },
+    {
+      "minor": 50000,
+      "currency": "AED",
+      "want": "500.00 AED"
+    },
+    {
+      "minor": 5,
+      "currency": "SAR",
+      "want": "0.05 SAR"
+    },
+    {
+      "minor": -1999,
+      "currency": "AED",
+      "want": "-19.99 AED"
+    },
+    {
+      "minor": 12500,
+      "currency": "KWD",
+      "want": "12.500 KWD"
+    },
+    {
+      "minor": 7,
+      "currency": "BHD",
+      "want": "0.007 BHD"
+    },
+    {
+      "minor": -1000,
+      "currency": "OMR",
+      "want": "-1.000 OMR"
+    },
+    {
+      "minor": 3000,
+      "currency": "JPY",
+      "want": "3000 JPY"
+    },
+    {
+      "minor": 0,
+      "currency": "aed",
+      "want": "0.00 AED"
+    }
+  ]
+}

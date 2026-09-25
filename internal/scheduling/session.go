@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/NewMux/mtdrb_go/internal/billing"
+	"github.com/NewMux/mtdrb_go/internal/catalog"
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/ledger"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
@@ -46,16 +47,19 @@ const (
 
 // Session is one slot on the calendar.
 type Session struct {
-	ID            ids.ID     `json:"id"`
-	SessionTypeID ids.ID     `json:"session_type_id"`
-	SeriesID      *ids.ID    `json:"series_id,omitempty"`
-	StartsAt      time.Time  `json:"starts_at"`
-	EndsAt        time.Time  `json:"ends_at"`
-	Status        Status     `json:"status"`
-	Location      string     `json:"location"`
-	Notes         string     `json:"notes"`
-	Attendees     []Attendee `json:"attendees"`
-	ServerSeq     int64      `json:"server_seq"`
+	ID            ids.ID    `json:"id"`
+	SessionTypeID ids.ID    `json:"session_type_id"`
+	SeriesID      *ids.ID   `json:"series_id,omitempty"`
+	StartsAt      time.Time `json:"starts_at"`
+	EndsAt        time.Time `json:"ends_at"`
+	Status        Status    `json:"status"`
+	// LocationID is where the session happens; Location is that place's
+	// name as it was at booking, or free text when no location was chosen.
+	LocationID *ids.ID    `json:"location_id"`
+	Location   string     `json:"location"`
+	Notes      string     `json:"notes"`
+	Attendees  []Attendee `json:"attendees"`
+	ServerSeq  int64      `json:"server_seq"`
 }
 
 // Service manages sessions and attendance.
@@ -153,8 +157,11 @@ type BookInput struct {
 	SessionTypeID ids.ID
 	StartsAt      time.Time
 	ClientIDs     []ids.ID
-	Location      string
-	Notes         string
+	// LocationID books the session at one of the practice's places, whose
+	// name is copied into Location. Without it, Location is free text.
+	LocationID *ids.ID
+	Location   string
+	Notes      string
 }
 
 // Book schedules a session and puts its attendees on the roster.
@@ -201,16 +208,23 @@ func (s *Service) Book(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in BookI
 	session := Session{
 		ID: ids.New(), SessionTypeID: in.SessionTypeID, StartsAt: startsAt, EndsAt: endsAt,
 		Status: StatusScheduled, Location: strings.TrimSpace(in.Location),
-		Notes: strings.TrimSpace(in.Notes),
+		Notes: strings.TrimSpace(in.Notes), LocationID: in.LocationID,
+	}
+	if in.LocationID != nil {
+		name, err := catalog.ResolveForBooking(ctx, tx, *in.LocationID)
+		if err != nil {
+			return Session{}, err
+		}
+		session.Location = name
 	}
 
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO sessions
-			(id, tenant_id, session_type_id, starts_at, ends_at, blocked_range, location, notes)
-		VALUES ($1, $2, $3, $4, $5, tstzrange($4, $6, '[)'), $7, $8)
+			(id, tenant_id, session_type_id, starts_at, ends_at, blocked_range, location, notes, location_id)
+		VALUES ($1, $2, $3, $4, $5, tstzrange($4, $6, '[)'), $7, $8, $9)
 		RETURNING server_seq`,
 		session.ID, tenantID, in.SessionTypeID, startsAt, endsAt, blockedUntil,
-		session.Location, session.Notes,
+		session.Location, session.Notes, session.LocationID,
 	).Scan(&session.ServerSeq); err != nil {
 		if isExclusionViolation(err) {
 			return Session{}, errs.Conflict(errs.CodeSchedulingConflict,
@@ -264,10 +278,10 @@ func (s *Service) Get(ctx context.Context, tx pgx.Tx, sessionID ids.ID) (Session
 	var status string
 	err := tx.QueryRow(ctx, `
 		SELECT id, session_type_id, series_id, starts_at, ends_at, status::text,
-		       location, notes, server_seq
+		       location, notes, server_seq, location_id
 		  FROM sessions WHERE id = $1`, sessionID,
 	).Scan(&sess.ID, &sess.SessionTypeID, &sess.SeriesID, &sess.StartsAt, &sess.EndsAt,
-		&status, &sess.Location, &sess.Notes, &sess.ServerSeq)
+		&status, &sess.Location, &sess.Notes, &sess.ServerSeq, &sess.LocationID)
 	if err != nil {
 		if db.IsNoRows(err) {
 			return Session{}, errs.NotFound("session")
@@ -288,7 +302,7 @@ func (s *Service) Get(ctx context.Context, tx pgx.Tx, sessionID ids.ID) (Session
 func (s *Service) ListRange(ctx context.Context, tx pgx.Tx, from, to time.Time) ([]Session, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, session_type_id, series_id, starts_at, ends_at, status::text,
-		       location, notes, server_seq
+		       location, notes, server_seq, location_id
 		  FROM sessions
 		 WHERE starts_at < $2 AND ends_at > $1
 		 ORDER BY starts_at`, from, to)
@@ -303,7 +317,7 @@ func (s *Service) ListRange(ctx context.Context, tx pgx.Tx, from, to time.Time) 
 		var sess Session
 		var status string
 		if err := rows.Scan(&sess.ID, &sess.SessionTypeID, &sess.SeriesID, &sess.StartsAt,
-			&sess.EndsAt, &status, &sess.Location, &sess.Notes, &sess.ServerSeq); err != nil {
+			&sess.EndsAt, &status, &sess.Location, &sess.Notes, &sess.ServerSeq, &sess.LocationID); err != nil {
 			return nil, errs.Internal(err, "scan session")
 		}
 		sess.Status = Status(status)

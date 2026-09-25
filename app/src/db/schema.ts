@@ -29,18 +29,25 @@ export const SYNC_TABLES = [
   'program_assignments',
   'workout_sessions',
   'set_logs',
+  'settings',
+  'locations',
+  'package_offers',
 ] as const;
 
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 /**
- * Local DDL.
+ * The schema every device started with — version 1.
+ *
+ * Frozen. A device that already has these tables will never run a changed
+ * CREATE TABLE IF NOT EXISTS, so editing a statement here would silently fork
+ * old devices from new ones. Changes go in UPGRADES instead.
  *
  * Deliberately loose about types: SQLite is dynamically typed anyway, and a
  * local schema that rejects a row the server considers valid would strand a
  * device. Money and loads stay integers, as they are everywhere else.
  */
-export const MIGRATIONS: string[] = [
+export const BASE_SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS clients (
      id TEXT PRIMARY KEY NOT NULL,
      full_name TEXT NOT NULL,
@@ -190,3 +197,79 @@ export const MIGRATIONS: string[] = [
      value TEXT NOT NULL
    )`,
 ];
+
+/**
+ * One step forward from the frozen base.
+ *
+ * `resync` names the collections whose rows are already on the device without
+ * the columns this step adds. Pull drops columns a device does not know, and
+ * the device's cursor is already past those rows, so without a resync the new
+ * fields would reach a device only when each row next changed — possibly
+ * never. The server restarts just those collections on the next pull.
+ */
+export interface SchemaUpgrade {
+  version: number;
+  statements: string[];
+  resync?: SyncTable[];
+}
+
+/** Every step after version 1, in order. Append only. */
+export const UPGRADES: SchemaUpgrade[] = [
+  {
+    // The practice's own row: the week the calendar draws, the hours a
+    // booking must fit, and the plan state that decides whether the outbox
+    // may send. One row, keyed by the tenant id.
+    version: 2,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS settings (
+         id TEXT PRIMARY KEY NOT NULL,
+         business_name TEXT, currency TEXT, timezone TEXT, country TEXT,
+         language TEXT, document_language TEXT, digits TEXT,
+         week_start INTEGER, working_hours TEXT,
+         session_timeout_days INTEGER, buffer_minutes INTEGER,
+         allow_overdraft INTEGER, no_show_is_billable INTEGER, low_balance_threshold INTEGER,
+         plan TEXT, plan_status TEXT, trial_ends_at TEXT, plan_renews_on TEXT,
+         cancel_at_period_end INTEGER, updated_at TEXT
+       )`,
+    ],
+  },
+  {
+    // Where the practice works and what it sells. Sessions gain the place
+    // they were booked at; the device already holds its sessions without
+    // the column, so they are pulled again.
+    version: 3,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS locations (
+         id TEXT PRIMARY KEY NOT NULL,
+         name TEXT NOT NULL, kind TEXT, address TEXT, region TEXT, colour TEXT,
+         is_primary INTEGER, archived_at TEXT, updated_at TEXT
+       )`,
+      `CREATE TABLE IF NOT EXISTS package_offers (
+         id TEXT PRIMARY KEY NOT NULL,
+         name TEXT NOT NULL, description TEXT, kind TEXT, credits INTEGER,
+         price_minor INTEGER, currency TEXT, price_includes_vat INTEGER,
+         validity_days INTEGER, cycle TEXT, session_type_id TEXT,
+         sort_order INTEGER, archived_at TEXT, updated_at TEXT
+       )`,
+      `ALTER TABLE sessions ADD COLUMN location_id TEXT`,
+    ],
+    resync: ['sessions'],
+  },
+  {
+    // The practice's VAT registration, and whether its owner has been
+    // through onboarding — the gate that decides whether a new account
+    // lands on the setup wizard or on Today.
+    version: 4,
+    statements: [
+      `ALTER TABLE settings ADD COLUMN vat_registered INTEGER`,
+      `ALTER TABLE settings ADD COLUMN trn TEXT`,
+      `ALTER TABLE settings ADD COLUMN vat_rate_bp INTEGER`,
+      `ALTER TABLE settings ADD COLUMN prices_include_vat INTEGER`,
+      `ALTER TABLE settings ADD COLUMN onboarded_at TEXT`,
+    ],
+    resync: ['settings'],
+  },
+];
+
+/** The version a device is at once every upgrade has run. */
+export const SCHEMA_VERSION = UPGRADES.reduce((v, u) => Math.max(v, u.version), 1);

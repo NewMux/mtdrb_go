@@ -1,5 +1,5 @@
-# Local development stack: Postgres for the ledger, MinIO for receipts and
-# progress photos. Both are configured to mirror production constraints that
+# Local development stack: Postgres for the ledger, an S3-compatible store for
+# receipts and progress photos. Both are configured to mirror production constraints that
 # matter for correctness — notably that the API connects as a role which does
 # NOT bypass row-level security.
 services:
@@ -21,39 +21,24 @@ services:
       timeout: 3s
       retries: 20
 
-  minio:
-    image: minio/minio:latest
-    container_name: coachpulse-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+  # S3-compatible object storage for receipts and progress photos. SeaweedFS,
+  # not MinIO: MinIO stopped publishing its server images, so minio/minio no
+  # longer pulls. The media service speaks plain S3 and was verified against
+  # this. Same port and keys as before, so .env.example is unchanged; the API
+  # creates the bucket itself (STORAGE_CREATE_BUCKET=true in development).
+  storage:
+    image: chrislusf/seaweedfs:4.47
+    container_name: coachpulse-storage
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{"identities":[{"name":"dev","credentials":[{"accessKey":"minioadmin","secretKey":"minioadmin"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' > /tmp/s3.json
+        exec weed server -dir=/data -s3 -s3.config=/tmp/s3.json
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000:8333"
     volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  # Creates the private bucket the media service expects. Public read is never
-  # enabled: every object is served through a short-lived presigned URL.
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/coachpulse &&
-      mc anonymous set none local/coachpulse &&
-      echo 'bucket ready (private)'
-      "
+      - storage-data:/data
 
 volumes:
   postgres-data:
-  minio-data:
+  storage-data:

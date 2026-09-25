@@ -1,5 +1,5 @@
 import { stubFetch, memoryTokens } from './support';
-import { ApiClient, ApiError, NetworkError } from '@/api/client';
+import { ApiClient, ApiError, COOKIE_REFRESH, NetworkError } from '@/api/client';
 
 describe('ApiClient', () => {
   it('surfaces the server machine code and meta', async () => {
@@ -151,3 +151,45 @@ describe('the default fetch', () => {
   });
 });
 
+
+describe('the web build\'s refresh cookie', () => {
+  it('asks for the cookie, keeps no refresh token, and refreshes from the cookie', async () => {
+    const tokens = memoryTokens(null as unknown as string, null as unknown as string);
+    let refreshed = 0;
+    const { fetch, calls } = stubFetch((url, init) => {
+      if (url.endsWith('/v1/auth/login')) {
+        return { status: 200, body: { account: {}, tokens: { access_token: 'a1', refresh_token: '' } } };
+      }
+      if (url.endsWith('/v1/auth/refresh')) {
+        refreshed++;
+        return { status: 200, body: { account: {}, tokens: { access_token: 'a2', refresh_token: '' } } };
+      }
+      const auth = (init?.headers as Record<string, string>)['Authorization'];
+      return auth === 'Bearer a2' ? { status: 200, body: { ok: true } } : { status: 401, body: { error: { code: 'token_expired', message: '' } } };
+    });
+    const api = new ApiClient({ baseUrl: 'https://api.test', tokens, fetchImpl: fetch, cookieTransport: true });
+
+    await api.login('sam@example.com', 'pw');
+    const login = calls[0]!;
+    expect((login.init?.headers as Record<string, string>)['X-Refresh-Transport']).toBe('cookie');
+    expect(login.init?.credentials).toBe('include');
+    expect(tokens.current().refresh).toBe(COOKIE_REFRESH);
+
+    await expect(api.get('/v1/clients')).resolves.toEqual({ ok: true });
+    expect(refreshed).toBe(1);
+    const refresh = calls.find((c) => c.url.endsWith('/v1/auth/refresh'))!;
+    expect(JSON.parse(String(refresh.init?.body))).toEqual({});
+    expect(refresh.init?.credentials).toBe('include');
+  });
+
+  it('surfaces a second-factor challenge as an error the screen can branch on', async () => {
+    const { fetch } = stubFetch(() => ({
+      status: 401,
+      body: { error: { code: 'mfa_required', message: 'enter the code', meta: { mfa_token: 'challenge' } } },
+    }));
+    const api = new ApiClient({ baseUrl: 'https://api.test', tokens: memoryTokens(null as unknown as string, null as unknown as string), fetchImpl: fetch });
+    await expect(api.login('sam@example.com', 'pw')).rejects.toMatchObject({
+      code: 'mfa_required', meta: { mfa_token: 'challenge' },
+    });
+  });
+});

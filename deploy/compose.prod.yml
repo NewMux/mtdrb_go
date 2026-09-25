@@ -1,0 +1,126 @@
+# CoachPulse in production, on any machine that runs Docker.
+#
+#   cp deploy/.env.production.example deploy/.env.production   # then fill it in
+#   docker compose --env-file deploy/.env.production -f deploy/compose.prod.yml up -d --build
+#
+# With a managed Postgres and S3/R2 (recommended), that is all. For a single
+# machine holding everything, add --profile local: Postgres and an S3-
+# compatible store (SeaweedFS) then run here too. LAUNCH.md has the details,
+# including the backups a single box needs.
+#
+# Every start runs migrations first, as the database owner, and the API and
+# worker start only if they succeed: a deploy whose schema change fails never
+# serves traffic against the half-migrated database.
+
+name: coachpulse
+
+x-server: &server
+  image: ${SERVER_IMAGE:-coachpulse-server:latest}
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    args:
+      RELEASE: ${RELEASE:-dev}
+  env_file: .env.production
+  restart: unless-stopped
+
+services:
+  migrate:
+    <<: *server
+    command: ["migrate", "up"]
+    restart: "no"
+    healthcheck: { disable: true }
+    environment:
+      DATABASE_URL: ${OWNER_DATABASE_URL:?set OWNER_DATABASE_URL in .env.production}
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  api:
+    <<: *server
+    command: ["api"]
+    environment:
+      # Caddy is the only way in, and it appends the caller's address.
+      TRUST_PROXY: "true"
+    expose: ["8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      seaweedfs: { condition: service_started, required: false }
+
+  worker:
+    <<: *server
+    command: ["worker"]
+    healthcheck: { disable: true }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    image: ${WEB_IMAGE:-coachpulse-web:latest}
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+      args:
+        DOMAIN: ${DOMAIN:?set DOMAIN in .env.production}
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+      - ${CADDY_EXTRA:-./web/extra-none}:/etc/caddy/extra:ro
+    networks:
+      default:
+        # In a single-box install the API reaches the object store at its
+        # public name; this keeps that inside Docker instead of hairpinning
+        # through the machine's public address.
+        aliases: ["files.${DOMAIN}"]
+    # Started, not healthy: in a single-box install the API checks its
+    # storage through Caddy at startup, so Caddy must not wait for it.
+    depends_on:
+      api: { condition: service_started }
+
+  # --- Single-box install only (--profile local) ---------------------------
+
+  postgres:
+    profiles: [local]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      OWNER_DB_PASSWORD: ${OWNER_DB_PASSWORD:-}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-local/init.sh:/docker-entrypoint-initdb.d/10-coachpulse.sh:ro
+      - ./provision.sql:/provision.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d coachpulse"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  seaweedfs:
+    profiles: [local]
+    image: chrislusf/seaweedfs:4.47
+    restart: unless-stopped
+    environment:
+      S3_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${STORAGE_SECRET_KEY:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{"identities":[{"name":"coachpulse","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' \
+          "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json
+        exec weed server -dir=/data -s3 -s3.config=/tmp/s3.json
+    volumes:
+      - seaweedfs-data:/data
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  seaweedfs-data:

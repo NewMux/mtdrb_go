@@ -3,13 +3,13 @@ package programming
 import (
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/httpx"
+	"github.com/NewMux/mtdrb_go/internal/platform/dates"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
 	"github.com/NewMux/mtdrb_go/internal/tenancy"
@@ -359,11 +359,14 @@ func (h *Handler) assignProgram(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
+	// Calendar dates, as the spec publishes them. Decoding into time.Time
+	// refused the "2026-09-23" every conforming client sends — the same bug
+	// STATUS.md records for the other date fields.
 	var req struct {
-		ClientID ids.ID     `json:"client_id"`
-		StartsOn *time.Time `json:"starts_on"`
-		EndsOn   *time.Time `json:"ends_on"`
-		Notes    string     `json:"notes"`
+		ClientID ids.ID      `json:"client_id"`
+		StartsOn *dates.Date `json:"starts_on"`
+		EndsOn   *dates.Date `json:"ends_on"`
+		Notes    string      `json:"notes"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.Error(w, r, err)
@@ -372,10 +375,10 @@ func (h *Handler) assignProgram(w http.ResponseWriter, r *http.Request) {
 	h.withTrainer(w, r, func(tx pgx.Tx, tenantID ids.ID) error {
 		in := AssignInput{
 			ProgramID: programID, ClientID: req.ClientID,
-			EndsOn: req.EndsOn, Notes: req.Notes,
+			EndsOn: req.EndsOn.TimePtr(), Notes: req.Notes,
 		}
-		if req.StartsOn != nil {
-			in.StartsOn = *req.StartsOn
+		if start := req.StartsOn.TimePtr(); start != nil {
+			in.StartsOn = *start
 		}
 		a, err := h.svc.Assign(r.Context(), tx, tenantID, in)
 		if err != nil {
@@ -392,13 +395,15 @@ func (h *Handler) assignProgram(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) startWorkout(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClientID     ids.ID     `json:"client_id"`
-		AssignmentID *ids.ID    `json:"assignment_id"`
-		DayID        *ids.ID    `json:"day_id"`
-		SessionID    *ids.ID    `json:"session_id"`
-		WeekNumber   int        `json:"week_number"`
-		PerformedOn  *time.Time `json:"performed_on"`
-		Notes        string     `json:"notes"`
+		ClientID     ids.ID  `json:"client_id"`
+		AssignmentID *ids.ID `json:"assignment_id"`
+		DayID        *ids.ID `json:"day_id"`
+		SessionID    *ids.ID `json:"session_id"`
+		WeekNumber   int     `json:"week_number"`
+		// A calendar date, as the spec publishes it; a timestamp is still
+		// accepted by dates.Date for callers that sent one.
+		PerformedOn *dates.Date `json:"performed_on"`
+		Notes       string      `json:"notes"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.Error(w, r, err)
@@ -421,8 +426,8 @@ func (h *Handler) startWorkout(w http.ResponseWriter, r *http.Request) {
 			ClientID: clientID, AssignmentID: req.AssignmentID, DayID: req.DayID,
 			SessionID: req.SessionID, WeekNumber: req.WeekNumber, Notes: req.Notes,
 		}
-		if req.PerformedOn != nil {
-			in.PerformedOn = *req.PerformedOn
+		if day := req.PerformedOn.TimePtr(); day != nil {
+			in.PerformedOn = *day
 		}
 		workout, err := h.svc.StartWorkout(r.Context(), tx, tenantID, in)
 		if err != nil {

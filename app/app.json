@@ -7,12 +7,40 @@
     "scheme": "coachpulse",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": true, "bundleIdentifier": "io.coachpulse.app" },
-    "android": { "package": "io.coachpulse.app", "edgeToEdgeEnabled": true },
-    "web": { "bundler": "metro", "output": "static" },
-    "plugins": ["expo-router", "expo-secure-store"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "io.coachpulse.app",
+      "infoPlist": {
+        "CFBundleLocalizations": [
+          "en",
+          "ar"
+        ],
+        "CFBundleDevelopmentRegion": "en"
+      }
+    },
+    "android": {
+      "package": "io.coachpulse.app",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-sqlite",
+      "expo-status-bar",
+      [
+        "expo-localization",
+        {
+          "supportsRTL": true
+        }
+      ]
+    ],
     "extra": {
-      "apiBaseUrl": "http://localhost:8080"
+      "apiBaseUrl": "http://localhost:8080",
+      "supportsRTL": true
     }
   }
 }

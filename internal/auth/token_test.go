@@ -26,7 +26,7 @@ func TestUserAccessRoundTrip(t *testing.T) {
 	iss, _ := newIssuer(t)
 	tenant, user := ids.New(), ids.New()
 
-	raw, err := iss.IssueUserAccess(tenant, user, "owner")
+	raw, err := iss.IssueUserAccess(tenant, user, "owner", ids.Nil, PlanClaims{})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestClientAccessCarriesClientID(t *testing.T) {
 
 func TestExpiredTokenReportsExpiryCode(t *testing.T) {
 	iss, c := newIssuer(t)
-	raw, err := iss.IssueUserAccess(ids.New(), ids.New(), "owner")
+	raw, err := iss.IssueUserAccess(ids.New(), ids.New(), "owner", ids.Nil, PlanClaims{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestTokenSignedWithAnotherKeyIsRejected(t *testing.T) {
 	iss, _ := newIssuer(t)
 	other := NewTokenIssuer([]byte(strings.Repeat("x", 32)), 15*time.Minute, time.Hour, clock.System{})
 
-	raw, err := other.IssueUserAccess(ids.New(), ids.New(), "owner")
+	raw, err := other.IssueUserAccess(ids.New(), ids.New(), "owner", ids.Nil, PlanClaims{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestAlgNoneIsRejected(t *testing.T) {
 func TestTamperedPayloadIsRejected(t *testing.T) {
 	iss, _ := newIssuer(t)
 	victim, attacker := ids.New(), ids.New()
-	raw, err := iss.IssueUserAccess(victim, ids.New(), "owner")
+	raw, err := iss.IssueUserAccess(victim, ids.New(), "owner", ids.Nil, PlanClaims{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +165,11 @@ func TestMalformedTokensRejected(t *testing.T) {
 func TestRefreshTokenIsRandomAndHashed(t *testing.T) {
 	iss, _ := newIssuer(t)
 
-	a, err := iss.NewRefreshToken(ids.Nil)
+	a, err := iss.NewRefreshToken(ids.Nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := iss.NewRefreshToken(ids.Nil)
+	b, err := iss.NewRefreshToken(ids.Nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,11 +192,11 @@ func TestRefreshTokenIsRandomAndHashed(t *testing.T) {
 
 func TestRefreshTokenKeepsFamilyOnRotation(t *testing.T) {
 	iss, _ := newIssuer(t)
-	first, err := iss.NewRefreshToken(ids.Nil)
+	first, err := iss.NewRefreshToken(ids.Nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rotated, err := iss.NewRefreshToken(first.FamilyID)
+	rotated, err := iss.NewRefreshToken(first.FamilyID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,12 +210,54 @@ func TestRefreshTokenKeepsFamilyOnRotation(t *testing.T) {
 
 func TestRefreshTokenExpiryUsesInjectedClock(t *testing.T) {
 	iss, c := newIssuer(t)
-	tok, err := iss.NewRefreshToken(ids.Nil)
+	tok, err := iss.NewRefreshToken(ids.Nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := c.Now().Add(30 * 24 * time.Hour)
 	if !tok.ExpiresAt.Equal(want) {
 		t.Errorf("expires at %v, want %v", tok.ExpiresAt, want)
+	}
+}
+
+func TestAnMFAChallengeIsNotAnAccessToken(t *testing.T) {
+	iss, _ := newIssuer(t)
+	tenant, user := ids.New(), ids.New()
+	challenge, err := iss.IssueMFAChallenge(tenant, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := iss.ParseAccess(challenge); err == nil {
+		t.Fatal("half a sign-in must not open the API")
+	}
+	gotTenant, gotUser, err := iss.ParseMFAChallenge(challenge)
+	if err != nil || gotTenant != tenant || gotUser != user {
+		t.Fatalf("challenge round trip: %v %v %v", gotTenant, gotUser, err)
+	}
+	access, err := iss.IssueUserAccess(tenant, user, "owner", ids.Nil, PlanClaims{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := iss.ParseMFAChallenge(access); err == nil {
+		t.Fatal("an access token must not pass as a challenge")
+	}
+}
+
+func TestAccessTokensCarryTheDeviceAndPlan(t *testing.T) {
+	iss, _ := newIssuer(t)
+	family := ids.New()
+	ends := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	raw, err := iss.IssueUserAccess(ids.New(), ids.New(), "owner", family,
+		PlanClaims{Plan: "trial", Status: "active", TrialEndsAt: &ends})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := iss.ParseAccess(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.FamilyID == nil || *claims.FamilyID != family || claims.Plan != "trial" ||
+		claims.TrialEndsAt == nil || !claims.TrialEndsAt.Equal(ends) {
+		t.Fatalf("claims lost the device or plan: %+v", claims)
 	}
 }

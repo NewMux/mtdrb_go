@@ -12,7 +12,8 @@
 import type { Database } from '@/db/types';
 import { getMeta, setMeta } from '@/db/types';
 import { SYNC_TABLES, type SyncTable } from '@/db/schema';
-import { ApiClient, NetworkError } from '@/api/client';
+import { clearResync, pendingResync } from '@/db/migrate';
+import { ApiClient, ApiError, NetworkError } from '@/api/client';
 import type { PushOperation } from '@/api/types';
 import * as outbox from './outbox';
 
@@ -25,7 +26,20 @@ export interface SyncReport {
   rejected: number;
   /** True when the device is offline; not an error, just a fact. */
   offline: boolean;
+  /**
+   * True when the account's plan has lapsed. The server refused the whole
+   * batch, and every operation is still waiting — they send once the plan
+   * is renewed, so nothing the trainer did is lost or marked refused.
+   */
+  inactive?: boolean;
   error?: string;
+}
+
+/** The server's answer to any write from a lapsed account. */
+export const SUBSCRIPTION_INACTIVE = 'subscription_inactive';
+
+export function isInactive(error: unknown): boolean {
+  return error instanceof ApiError && error.code === SUBSCRIPTION_INACTIVE;
 }
 
 const syncTableSet = new Set<string>(SYNC_TABLES);
@@ -98,9 +112,17 @@ export async function pull(db: Database, api: ApiClient): Promise<number> {
   const columnCache = new Map<string, Set<string>>();
   let pulled = 0;
   let cursor = (await getMeta(db, CURSOR_KEY)) ?? '';
+  // Collections a schema upgrade needs again from the start. Sent on the first
+  // page only, and cleared once the server has answered it, so an upgrade
+  // that lands while offline is still honoured on the next connection.
+  let reset = await pendingResync(db);
 
   for (let page = 0; page < 100; page++) {
-    const result = await api.pull(cursor);
+    const result = await api.pull(cursor, 500, reset);
+    if (reset.length > 0) {
+      await clearResync(db);
+      reset = [];
+    }
 
     for (const change of result.changes) {
       if (!syncTableSet.has(change.collection)) {
@@ -220,6 +242,12 @@ export async function synchronise(db: Database, api: ApiClient): Promise<SyncRep
       // Being offline is the normal case this app is built for, not a failure
       // worth showing anyone.
       report.offline = true;
+      return report;
+    }
+    if (isInactive(error)) {
+      // Pull already ran, so the trainer's view is current; only sending
+      // waits. The outbox is untouched.
+      report.inactive = true;
       return report;
     }
     report.error = error instanceof Error ? error.message : String(error);

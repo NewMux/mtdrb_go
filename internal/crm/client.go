@@ -23,7 +23,21 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
+	"github.com/NewMux/mtdrb_go/internal/subscription"
 )
+
+// Active clients are what a plan's client limit counts: a lead or an
+// archived client costs the trainer nothing, and should not cost a place.
+func init() {
+	subscription.RegisterCounter(subscription.LimitActiveClients, func(ctx context.Context, tx pgx.Tx) (int, error) {
+		var n int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM clients WHERE status = 'active' AND deleted_at IS NULL`).Scan(&n); err != nil {
+			return 0, errs.Internal(err, "count active clients")
+		}
+		return n, nil
+	})
+}
 
 // Status is where a client sits in their lifecycle.
 type Status string
@@ -131,6 +145,19 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Cre
 	email := normalizeEmail(in.Email)
 
 	clientID := db.ResolveID(in.ID)
+	// A plan's client limit counts active clients, so only a new active one
+	// needs room — and not a retried create of one that already exists.
+	if in.Status == StatusActive {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM clients WHERE id = $1)`, clientID).Scan(&exists); err != nil {
+			return Client{}, errs.Internal(err, "check client")
+		}
+		if !exists {
+			if err := subscription.CheckRoom(ctx, tx, subscription.LimitActiveClients); err != nil {
+				return Client{}, err
+			}
+		}
+	}
 	// pgp_sym_encrypt is applied in SQL rather than in Go so the plaintext
 	// never exists in a Go string that could reach a log or a heap dump.
 	// DO NOTHING rather than a plain insert, so a retried push converges on
@@ -202,6 +229,21 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, clientID ids.ID, in Upd
 	if in.Status != nil && !in.Status.Valid() {
 		return Client{}, errs.Invalid(errs.CodeValidation, "unknown client status %q", *in.Status).
 			WithField("status", "must be lead, active, paused or archived")
+	}
+	// Reactivating a paused or archived client takes a place in the plan.
+	if in.Status != nil && *in.Status == StatusActive {
+		var current string
+		if err := tx.QueryRow(ctx, `SELECT status::text FROM clients WHERE id = $1`, clientID).Scan(&current); err != nil {
+			if db.IsNoRows(err) {
+				return Client{}, errs.NotFound("no such client")
+			}
+			return Client{}, errs.Internal(err, "read client status")
+		}
+		if current != string(StatusActive) {
+			if err := subscription.CheckRoom(ctx, tx, subscription.LimitActiveClients); err != nil {
+				return Client{}, err
+			}
+		}
 	}
 	if in.DefaultRateMinor != nil {
 		if err := validateRate(*in.DefaultRateMinor); err != nil {

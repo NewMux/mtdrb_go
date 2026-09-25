@@ -1,5 +1,8 @@
 # Running CoachPulse
 
+This is running it on your own machine. For production — servers, the app
+stores, backups — see [LAUNCH.md](LAUNCH.md).
+
 Two processes: the Go API with its Postgres, and the Expo app. The app is
 offline-first, so once it has synced once it keeps working with the API
 stopped — which is worth trying deliberately, because it is the whole point of
@@ -8,7 +11,8 @@ the product.
 ## 1. The backend
 
 ```bash
-make up      # Postgres + MinIO via deploy/docker-compose.yml, then migrations
+cp .env.example .env
+make up      # Postgres + object storage via deploy/docker-compose.yml, then migrations
 make run     # API on :8080
 ```
 
@@ -30,11 +34,65 @@ make migrate
 ```
 
 The API checks its object-storage bucket at boot and exits if it cannot reach
-it, so you also need something S3-shaped on `:9000`. MinIO is the intended one;
-any S3-compatible server will satisfy the check. Media (progress photos) is the
+it, so you also need something S3-shaped on `:9000`. The compose file runs
+SeaweedFS there (MinIO no longer publishes server images); any S3-compatible
+server will do, and with `STORAGE_CREATE_BUCKET=true` the API creates the
+bucket itself. Media (progress photos) is the
 only feature that needs it — nothing in the walkthrough below does.
 
 </details>
+
+### The worker
+
+```bash
+make worker   # scheduled jobs, against the local stack
+```
+
+Today it retires packs whose expiry date has passed, a quarter past midnight
+in each practice's own time zone, moving their unused value out of Deferred
+Revenue. Run as many as you like: one leads (a Postgres advisory lock) and
+every job claims its run in `job_runs`, so nothing happens twice. It needs
+only `DATABASE_URL`; `JOB_INTERVAL` (default `1m`) is how often it looks.
+
+### Email, plans and the admin tool
+
+**Password-reset email.** With no `SMTP_HOST` set, the API writes each email
+to its log instead of sending it — the reset link is right there in the
+terminal running `make run`. Production refuses to start without SMTP. The
+link points at `APP_URL` (default `http://localhost:8081`, the Expo web dev
+server).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SMTP_HOST`, `SMTP_PORT` | —, 587 | Mail server |
+| `SMTP_TLS` | `starttls` (`implicit` on 465) | `starttls` refuses a server that does not offer it; `none` is for a local mail catcher and refused in production |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | — | Authentication, if the server wants it |
+| `MAIL_FROM` | `CoachPulse <no-reply@coachpulse.io>` | Sender |
+| `APP_URL` | `http://localhost:8081` | Where reset links point; https in production |
+| `TRUST_PROXY` | `false` | Take the caller's address from the right-most `X-Forwarded-For` entry, the one the proxy in front appended. Only when every request arrives through that proxy |
+
+**Plans.** Every new practice starts a fourteen-day trial of everything. When
+it lapses the account is read-only: every read keeps working, and writes
+(sync included) answer `402 subscription_inactive` until the plan changes.
+There is no payment provider yet; plans are changed with `cmd/admin`, which
+connects as the database owner and acts as `coachpulse_definer`, the one role
+that reads across practices:
+
+```bash
+export OWNER_DATABASE_URL=postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
+go run ./cmd/admin list-tenants
+go run ./cmd/admin set-plan <tenant-id> pro -renews-on 2026-12-31
+go run ./cmd/admin set-plan <tenant-id> starter      # 25 active clients, 1 location
+go run ./cmd/admin extend-trial <tenant-id> 7
+go run ./cmd/admin restore-tenant <tenant-id>       # undo a deletion within 30 days
+```
+
+**Deleting an account.** Settings → Security → *Delete account*. For an owner
+it deactivates the practice at once; the worker removes it for good after
+`ACCOUNT_PURGE_AFTER` (30 days). `restore-tenant` undoes it until then.
+
+A change reaches the trainer's devices at their next token refresh (within
+fifteen minutes) and their next sync.
 
 ## 2. The app
 
@@ -161,7 +219,7 @@ bugs table in [STATUS.md](STATUS.md).
 | Symptom | Cause |
 |---|---|
 | App hangs on sign-in | `EXPO_PUBLIC_API_URL` points at `localhost`, or the phone is on another network |
-| `check bucket coachpulse` at boot | Object storage is not running; `make up` starts MinIO |
+| `check bucket coachpulse` at boot | Object storage is not running, or the bucket is missing: `make up` starts it, and `STORAGE_CREATE_BUCKET=true` (in `.env.example`) creates the bucket |
 | CORS errors in a browser | Add that exact origin to `CORS_ORIGINS` |
 | Today is empty | Nothing is booked for today — see step 4 |
 | Badge says "needs attention" | An operation was refused. Tap it: the reason is in plain words, with *Try again* or *Discard* |
@@ -173,16 +231,32 @@ cd app
 EXPO_PUBLIC_DEMO=1 npx expo start
 ```
 
-Seeds a practice into the device database on first launch — three clients, a
-day of sessions, packages, invoices, last week's training — and never calls the
-network. Useful for showing someone the app without standing up a backend.
+Every launch seeds the device with Sam Rivera's studio in Dubai: twelve
+clients over twelve weeks, a Wednesday with four sessions (one already done),
+packs, invoices in AED (a renewal just sent, one on net-30 terms, one overdue)
+and three weeks of logged training. It never calls the network. Useful for
+showing someone the app without standing up a backend.
 
-It is not a mock: every screen already reads local SQLite, so this is the real
-app with the sync engine idle. What it cannot do is anything the server
-decides. Credits are not really burned, revenue is not recognised and invoices
-are not settled — those happen in the ledger, behind the API. The screens say
-"waiting on the server" and nothing ever answers, which is exactly what a phone
-in a basement sees.
+It is not a mock. The practice was recorded from the real API: `cmd/demo`
+runs a scenario against a throwaway database with a fixed clock and writes
+what a device would receive — a full sync pull and the answers to the reads
+the app makes — to `app/src/demo/fixtures/recording.json`. The demo seeds the
+device by pulling that through the real sync engine, and serves the recorded
+reads, so every balance and earnings figure is real ledger output. Dates move
+so the recorded Wednesday is always today, at the studio's wall-clock hours.
+
+What it cannot do is anything the server decides next. Credits are not
+really burned, revenue is not recognised and invoices are not settled. Offline
+actions queue, exactly as on a phone in a basement; the online-only ones
+(issuing an invoice) say this is the demo.
+
+To change the practice, edit `cmd/demo/scenario.go` and re-record against the
+local stack (the owner connection needs `CREATEDB`; the scratch database is
+dropped afterwards). The same scenario gives the same file, byte for byte:
+
+```bash
+make demo-record
+```
 
 To build it for hosting under a path:
 

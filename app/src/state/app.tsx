@@ -14,13 +14,13 @@ import React, {
 import { AppState as RNAppState, type AppStateStatus } from 'react-native';
 import Constants from 'expo-constants';
 
-import { ApiClient } from '@/api/client';
+import { ApiClient, NetworkError } from '@/api/client';
 import type { Account } from '@/api/types';
 import { openDatabase } from '@/db';
 import { getMeta, setMeta, type Database } from '@/db/types';
-import { secureTokens } from '@/auth/tokens';
+import { forgetPractice } from '@/db/forget';
+import { isWeb, secureTokens } from '@/auth/tokens';
 import { synchronise, type SyncReport } from '@/sync/engine';
-import { DEMO_ACCOUNT, seedDemo } from '@/demo/seed';
 import * as outbox from '@/sync/outbox';
 
 /** How often a foregrounded app tries to drain the outbox. */
@@ -30,11 +30,31 @@ const SYNC_INTERVAL_MS = 45_000;
  * A build with no server behind it.
  *
  * Not a mock: every screen already reads local SQLite, so this is the real app
- * with the sync engine idle. What it cannot do is anything the server decides
- * — burn a credit, recognise revenue, settle an invoice — so those stay
- * queued, exactly as they would on a phone with no signal.
+ * seeded from a recording of the real server (see src/demo/replay.ts). What it
+ * cannot do is anything the server decides next — burn a credit, recognise
+ * revenue, settle an invoice — so those stay queued, exactly as they would on
+ * a phone with no signal.
  */
 export const DEMO = process.env.EXPO_PUBLIC_DEMO === '1';
+
+type DemoModule = typeof import('@/demo/replay');
+type DemoKit = { module: DemoModule; recording: import('@/demo/replay').Recording };
+
+/**
+ * The replay and its recording, in a demo build only.
+ *
+ * A require on the inlined flag, as in src/db/index.ts: a normal build drops
+ * the branch, and with it half a megabyte of fixture.
+ */
+function loadDemo(): DemoKit | null {
+  if (process.env.EXPO_PUBLIC_DEMO !== '1') return null;
+  /* eslint-disable @typescript-eslint/no-var-requires */
+  return {
+    module: require('@/demo/replay') as DemoModule,
+    recording: require('@/demo/fixtures/recording.json') as DemoKit['recording'],
+  };
+  /* eslint-enable @typescript-eslint/no-var-requires */
+}
 
 const ACCOUNT_KEY = 'auth.account';
 const LAST_SYNC_KEY = 'sync.last_at';
@@ -46,6 +66,8 @@ export interface SyncState {
   pending: number;
   failed: number;
   error: string | null;
+  /** The plan has lapsed: everything queued waits for a renewal. */
+  inactive: boolean;
 }
 
 interface AppContextValue {
@@ -69,12 +91,22 @@ interface AppContextValue {
   revision: number;
   /** Tells open screens their data changed. */
   touch: () => void;
+  /** Throws an ApiError `mfa_required` when a second factor is needed. */
   signIn: (email: string, password: string) => Promise<void>;
+  /** Finishes a sign-in that stopped for a code. */
+  completeMfa: (mfaToken: string, code: string) => Promise<void>;
   signUp: (input: {
     email: string; password: string; display_name: string;
-    business_name?: string; currency?: string;
+    business_name?: string; currency?: string; timezone?: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
+  /**
+   * Deletes the account on the server, then everything of it on this device.
+   * Resolves with when the practice is removed for good (for an owner).
+   */
+  deleteAccount: (password: string) => Promise<{ scope: 'practice' | 'user'; purge_after?: string }>;
+  /** Keeps the stored account in step after a profile change. */
+  updateAccount: (patch: Partial<Account>) => Promise<void>;
   syncNow: () => Promise<SyncReport | null>;
 }
 
@@ -91,7 +123,7 @@ const AppContext = createContext<AppContextValue | null>(null);
  * EXPO_PUBLIC_ is Expo's own convention: it is inlined at build time, so this
  * works in a release build too.
  */
-function baseUrl(): string {
+export function baseUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_API_URL;
   if (fromEnv) return fromEnv.replace(/\/+$/, '');
 
@@ -107,6 +139,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [revision, setRevision] = useState(0);
   const [sync, setSync] = useState<SyncState>({
     running: false, offline: false, lastSyncAt: null, pending: 0, failed: 0, error: null,
+    inactive: false,
   });
 
   // Held in a ref so the API client, built once, can reach the current setter
@@ -114,13 +147,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // refresh promise that keeps concurrent 401s from spending the token twice.
   const signedOut = useRef<() => void>(() => {});
 
+  const demo = useMemo(loadDemo, []);
   const api = useMemo(
-    () => new ApiClient({
-      baseUrl: baseUrl(),
-      tokens: secureTokens,
-      onSignedOut: () => signedOut.current(),
-    }),
-    [],
+    () => demo
+      ? new demo.module.DemoApi(demo.recording)
+      : new ApiClient({
+        baseUrl: baseUrl(),
+        tokens: secureTokens,
+        onSignedOut: () => signedOut.current(),
+        cookieTransport: isWeb,
+      }),
+    [demo],
   );
 
   const touch = useCallback(() => setRevision((r) => r + 1), []);
@@ -147,11 +184,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       if (cancelled) return;
 
-      if (DEMO) {
-        await seedDemo(database);
+      if (demo) {
+        await demo.module.replay(database, api as InstanceType<DemoModule['DemoApi']>);
         if (cancelled) return;
         setDb(database);
-        setAccount(DEMO_ACCOUNT);
+        setAccount(demo.recording.account);
         await refreshCounts(database);
         setReady(true);
         return;
@@ -172,7 +209,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setReady(true);
     })();
     return () => { cancelled = true; };
-  }, [refreshCounts]);
+  }, [refreshCounts, demo, api]);
 
   const syncNow = useCallback(async (): Promise<SyncReport | null> => {
     if (!db || !account) return null;
@@ -197,6 +234,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pending: counts.pending,
       failed: counts.failed,
       error: report.error ?? null,
+      inactive: report.inactive ?? false,
     });
     // Rows arrived, so anything on screen is now stale.
     if (report.pulled > 0 || report.pushed > 0) touch();
@@ -237,9 +275,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persistAccount(session.account);
   }, [api, persistAccount]);
 
+  const completeMfa = useCallback(async (mfaToken: string, code: string) => {
+    const session = await api.verifyMfa(mfaToken, code);
+    await persistAccount(session.account);
+  }, [api, persistAccount]);
+
   const signUp = useCallback(async (input: {
     email: string; password: string; display_name: string;
-    business_name?: string; currency?: string;
+    business_name?: string; currency?: string; timezone?: string;
   }) => {
     const session = await api.signup(input);
     await persistAccount(session.account);
@@ -254,15 +297,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * tokens go; the evidence stays.
    */
   const signOut = useCallback(async () => {
-    await secureTokens.clear();
+    // Ending the session on the server matters most on the web, where the
+    // refresh cookie would otherwise sign the next reload straight back in.
+    // Best effort: signing out with no signal still signs this device out.
+    try {
+      await api.logout();
+    } catch {
+      await secureTokens.clear();
+    }
     await persistAccount(null);
-  }, [persistAccount]);
+  }, [api, persistAccount]);
+
+  const deleteAccount = useCallback(async (password: string) => {
+    const result = await api.post<{ scope: 'practice' | 'user'; purge_after?: string }>(
+      '/v1/session/delete-account', { password });
+    // The server has revoked every session; what remains is this device.
+    await secureTokens.clear();
+    if (db) await forgetPractice(db);
+    await persistAccount(null);
+    return result;
+  }, [api, db, persistAccount]);
+
+  const updateAccount = useCallback(async (patch: Partial<Account>) => {
+    if (account) await persistAccount({ ...account, ...patch });
+  }, [account, persistAccount]);
 
   signedOut.current = () => { void persistAccount(null); };
 
   const value = useMemo<AppContextValue>(
-    () => ({ db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow }),
-    [db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow],
+    () => ({
+      db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, deleteAccount, updateAccount, syncNow,
+    }),
+    [db, api, account, ready, fatal, sync, revision, touch, signIn, completeMfa, signUp, signOut, deleteAccount, updateAccount, syncNow],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -323,4 +389,64 @@ export function useQuery<T>(
 
   const reload = useCallback(() => setLocal((n) => n + 1), []);
   return { data, loading, error, reload };
+}
+
+export interface RemoteResult<T> {
+  data: T | null;
+  loading: boolean;
+  /** True when the last attempt failed for want of a connection — the ordinary case offline. */
+  offline: boolean;
+  error: Error | null;
+  reload: () => void;
+}
+
+/**
+ * Reads something only the server can answer — a P&L, a VAT return.
+ *
+ * The sibling of `useQuery` for numbers that are ledger arithmetic and
+ * meaningless stale. A connection failure is reported as `offline` rather
+ * than as an error, so the screen can say "needs a connection" once instead
+ * of showing a fault; anything else is a real error and surfaces as one.
+ * The last good answer is kept while a reload is in flight.
+ */
+export function useRemote<T>(
+  run: (api: ApiClient) => Promise<T>,
+  deps: React.DependencyList = [],
+): RemoteResult<T> {
+  const { api, revision } = useApp();
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [local, setLocal] = useState(0);
+
+  const runRef = useRef(run);
+  runRef.current = run;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    runRef.current(api)
+      .then((result) => {
+        if (cancelled) return;
+        setData(result);
+        setOffline(false);
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        if (cause instanceof NetworkError) {
+          setOffline(true);
+          setError(null);
+        } else {
+          setError(cause instanceof Error ? cause : new Error(String(cause)));
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, revision, local, ...deps]);
+
+  const reload = useCallback(() => setLocal((n) => n + 1), []);
+  return { data, loading, offline, error, reload };
 }

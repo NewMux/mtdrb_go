@@ -1,18 +1,26 @@
 /**
  * The root layout.
  *
- * Holds the provider everything else reads from, and the one piece of routing
- * logic that is not a screen: whether the trainer is signed in.
+ * Holds the providers everything else reads from — the local database and
+ * account, then the device's language and appearance, then the overlays a
+ * screen can raise — and the one piece of routing logic that is not a screen:
+ * whether the trainer is signed in.
  */
 
 import React, { useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
-import { AppProvider, useApp } from '@/state/app';
-import { colors, space, type as typography } from '@/ui/theme';
+import { isHeldByAnotherTab } from '@/db/errors';
+import { i18nFor, useT } from '@/i18n';
+import { practiceSettings } from '@/features/plan';
+import { AppProvider, useApp, useQuery } from '@/state/app';
+import { PreferencesProvider } from '@/state/preferences';
+import { OverlayProvider } from '@/ui/overlay';
+import { space } from '@/ui/theme';
+import { makeStyles, useTheme } from '@/ui/theming';
 
 /**
  * Sends the trainer to the right place.
@@ -25,28 +33,53 @@ function AuthGate() {
   const { ready, account } = useApp();
   const segments = useSegments();
   const router = useRouter();
+  // The practice's mirrored row: null until the first sync brings it, which
+  // is why a missing row sends nobody anywhere.
+  const practice = useQuery(practiceSettings).data;
+  const needsSetup = account?.role === 'owner' && practice != null && !practice.onboarded_at;
 
   useEffect(() => {
     if (!ready) return;
     const onSignIn = segments[0] === 'sign-in';
-    if (!account && !onSignIn) router.replace('/sign-in');
-    else if (account && onSignIn) router.replace('/');
-  }, [ready, account, segments, router]);
+    // A reset link is opened by someone who cannot sign in; it is the one
+    // other screen reachable without an account.
+    const onReset = segments[0] === 'reset-password';
+    const onSetup = segments[0] === 'onboarding';
+    if (!account && !onSignIn && !onReset) router.replace('/sign-in');
+    else if (account && onSignIn) router.replace(needsSetup ? '/onboarding' : '/');
+    // A new practice is set up before anything else; one that is set up has
+    // no business on the wizard.
+    else if (needsSetup && !onSetup) router.replace('/onboarding');
+    else if (account && onSetup && practice?.onboarded_at) router.replace('/');
+  }, [ready, account, segments, router, needsSetup, practice?.onboarded_at]);
 
   return null;
 }
 
 function Shell() {
   const { ready, fatal } = useApp();
+  const { t } = useT();
+  const theme = useTheme();
+  const styles = useStyles();
+  const { colors } = theme;
 
   // No local database means no app: every screen reads from it. Saying so
   // beats a spinner that never stops.
+  if (fatal && isHeldByAnotherTab(fatal)) {
+    return (
+      <View style={styles.centre}>
+        <Text style={styles.fatalTitle}>{t('shell.otherTabTitle')}</Text>
+        <Text style={styles.fatalBody}>{t('shell.otherTabBody')}</Text>
+      </View>
+    );
+  }
+
   if (fatal) {
     return (
       <View style={styles.centre}>
-        <Text style={styles.fatalTitle}>Can&apos;t open storage</Text>
+        <Text style={styles.fatalTitle}>{t('shell.storageTitle')}</Text>
         <Text style={styles.fatalBody}>
-          CoachPulse keeps everything on the device, and this browser will not let it.
+          {t('shell.storageBody')}
           {'\n\n'}
           {fatal}
         </Text>
@@ -57,13 +90,14 @@ function Shell() {
   if (!ready) {
     return (
       <View style={styles.centre}>
-        <ActivityIndicator color={colors.accent} size="large" />
+        <ActivityIndicator color={colors.accentInk} size="large" />
       </View>
     );
   }
 
   return (
     <>
+      <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
       <AuthGate />
       <Stack
         screenOptions={{
@@ -73,30 +107,65 @@ function Shell() {
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="dashboard" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
-        <Stack.Screen name="client/[id]" options={{ title: 'Client' }} />
-        <Stack.Screen name="client/new" options={{ title: 'New client', presentation: 'modal' }} />
-        <Stack.Screen name="workout/[id]" options={{ title: 'Workout' }} />
-        <Stack.Screen name="sell-package" options={{ title: 'Sell a package', presentation: 'modal' }} />
-        <Stack.Screen name="sync" options={{ title: 'Sync', presentation: 'modal' }} />
+        <Stack.Screen name="reset-password" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        <Stack.Screen name="+not-found" options={{ headerShown: false }} />
+        <Stack.Screen name="workout/[id]" options={{ title: t('workout.fallbackTitle') }} />
+        <Stack.Screen name="sell-package" options={{ title: t('sellPackage.title'), presentation: 'modal' }} />
+        <Stack.Screen name="sync" options={{ title: t('syncScreen.title'), presentation: 'modal' }} />
       </Stack>
     </>
+  );
+}
+
+/**
+ * The last line of defence: a screen that throws while rendering. Without it
+ * a release build shows a blank white screen and nothing else. It renders
+ * outside the app's providers — one of them may be what failed — so it
+ * carries its own colours and says it in both languages. Nothing is lost:
+ * everything the trainer did is already in the device's database and outbox.
+ */
+export function ErrorBoundary({ error, retry }: { error: Error; retry: () => Promise<void> }) {
+  useEffect(() => { console.error('screen crashed', error); }, [error]);
+  const en = i18nFor('en', 'latn').t;
+  const ar = i18nFor('ar', 'latn').t;
+  const title = { color: '#f2f2f2', fontSize: 20, fontWeight: '600' as const, marginBottom: space.md };
+  return (
+    <View style={{ flex: 1, backgroundColor: '#121212', justifyContent: 'center', padding: space.xl }}>
+      <Text style={title}>{en('shell.crashTitle')}</Text>
+      <Text style={[title, { writingDirection: 'rtl' }]}>{ar('shell.crashTitle')}</Text>
+      <Text style={{ color: '#a0a0a0', fontSize: 15, marginBottom: space.xl }}>
+        {`${en('shell.crashBody')} · ${ar('shell.crashBody')}`}
+      </Text>
+      <Text
+        accessibilityRole="button"
+        onPress={() => { void retry(); }}
+        style={{ color: '#121212', backgroundColor: '#ccff00', alignSelf: 'flex-start', paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: 999, fontWeight: '600', overflow: 'hidden' }}
+      >
+        {`${en('shell.crashRetry')} · ${ar('shell.crashRetry')}`}
+      </Text>
+    </View>
   );
 }
 
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
       <AppProvider>
-        <Shell />
+        <PreferencesProvider>
+          <OverlayProvider>
+            <Shell />
+          </OverlayProvider>
+        </PreferencesProvider>
       </AppProvider>
     </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, type }) => ({
   centre: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -104,6 +173,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: space.xl,
   },
-  fatalTitle: { ...typography.title, color: colors.ink, marginBottom: space.md },
-  fatalBody: { ...typography.body, color: colors.inkMuted, textAlign: 'center' },
-});
+  fatalTitle: { ...type.title, color: colors.ink, marginBottom: space.md },
+  fatalBody: { ...type.body, color: colors.inkMuted, textAlign: 'center' },
+}));

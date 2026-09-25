@@ -3,11 +3,11 @@ package billing
 import (
 	"html/template"
 	"net/http"
-	"strings"
 
 	"github.com/NewMux/mtdrb_go/internal/httpx"
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
+	"github.com/NewMux/mtdrb_go/internal/platform/money"
 )
 
 // This is the page a client opens from a WhatsApp message. It has one job:
@@ -18,37 +18,9 @@ import (
 // source, so the emailed PDF and the shared link cannot drift apart.
 
 // formatMoney renders minor units for display. Templates cannot do arithmetic,
-// and a currency shown wrong on a bill is worse than no bill.
-func formatMoney(minor int64, currency string) string {
-	sign := ""
-	if minor < 0 {
-		sign, minor = "-", -minor
-	}
-	var b strings.Builder
-	b.WriteString(sign)
-	b.WriteString(itoa(minor / 100))
-	b.WriteByte('.')
-	frac := minor % 100
-	b.WriteByte(byte('0' + frac/10))
-	b.WriteByte(byte('0' + frac%10))
-	b.WriteByte(' ')
-	b.WriteString(currency)
-	return b.String()
-}
-
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
+// and a currency shown wrong on a bill is worse than no bill — a Kuwaiti
+// dinar has three decimals, not two.
+func formatMoney(minor int64, currency string) string { return money.Format(minor, currency) }
 
 var invoiceTemplate = template.Must(template.New("invoice").Funcs(template.FuncMap{
 	"money": formatMoney,

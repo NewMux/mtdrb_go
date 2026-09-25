@@ -115,14 +115,47 @@ func (m Money) sameCurrency(other Money) error {
 	return nil
 }
 
-// String renders the amount with two decimal places for logs and receipts.
-func (m Money) String() string {
-	sign := ""
-	v := m.Minor
-	if v < 0 {
-		sign, v = "-", -v
+// String renders the amount in its currency's own precision, for logs and
+// receipts: "500.00 AED", "12.500 KWD", "3000 JPY".
+func (m Money) String() string { return Format(m.Minor, m.Currency) }
+
+// exponents lists the ISO-4217 currencies whose minor unit is not a
+// hundredth. Most of the Gulf is two decimals, but Kuwait, Bahrain and Oman
+// count in fils — thousandths — so a dinar printed with two places is off by
+// a factor of ten on every line of an invoice.
+var exponents = map[string]int{
+	"BHD": 3, "IQD": 3, "JOD": 3, "KWD": 3, "LYD": 3, "OMR": 3, "TND": 3,
+	"BIF": 0, "CLP": 0, "DJF": 0, "GNF": 0, "ISK": 0, "JPY": 0, "KMF": 0,
+	"KRW": 0, "PYG": 0, "RWF": 0, "UGX": 0, "VND": 0, "VUV": 0, "XAF": 0,
+	"XOF": 0, "XPF": 0,
+}
+
+// Exponent is the number of decimal places in the currency's minor unit.
+func Exponent(currency string) int {
+	if e, ok := exponents[normalize(currency)]; ok {
+		return e
 	}
-	return fmt.Sprintf("%s%d.%02d %s", sign, v/100, v%100, m.Currency)
+	return 2
+}
+
+// Format renders minor units in the currency's precision, without grouping:
+// the plain form that logs, CSV exports and the shared test vectors agree on.
+// Locale-aware display belongs to the client.
+func Format(minor int64, currency string) string {
+	currency = normalize(currency)
+	sign := ""
+	if minor < 0 {
+		sign, minor = "-", -minor
+	}
+	exp := Exponent(currency)
+	if exp == 0 {
+		return fmt.Sprintf("%s%d %s", sign, minor, currency)
+	}
+	scale := int64(1)
+	for range exp {
+		scale *= 10
+	}
+	return fmt.Sprintf("%s%d.%0*d %s", sign, minor/scale, exp, minor%scale, currency)
 }
 
 type jsonMoney struct {

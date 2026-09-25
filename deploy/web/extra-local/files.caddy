@@ -1,0 +1,6 @@
+# Object storage for a single-box install: presigned URLs are opened by
+# phones and browsers, so the store needs a public HTTPS name of its own.
+# Point DNS for files.<your domain> at this machine too.
+files.{$DOMAIN} {
+	reverse_proxy seaweedfs:8333
+}
