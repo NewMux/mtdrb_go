@@ -4,10 +4,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/NewMux/mtdrb_go/internal/api"
 	"github.com/NewMux/mtdrb_go/internal/app"
@@ -21,6 +23,15 @@ import (
 )
 
 func main() {
+	// The image has no shell and no curl, so the container's health check is
+	// this binary asking itself.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := healthcheck(); err != nil {
+			fmt.Fprintf(os.Stderr, "api: unhealthy: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "api: %v\n", err)
 		os.Exit(1)
@@ -105,4 +116,25 @@ func run() error {
 	srv := api.New(cfg, pool, log, services.Handlers())
 
 	return srv.Run(ctx)
+}
+
+// healthcheck asks the running API on this machine whether it is ready.
+func healthcheck() error {
+	addr := os.Getenv("HTTP_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + addr + "/readyz")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readyz answered %d", resp.StatusCode)
+	}
+	return nil
 }

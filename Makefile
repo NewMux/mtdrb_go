@@ -19,7 +19,7 @@ APP_DATABASE_URL   ?= postgres://coachpulse_app:coachpulse_app@localhost:5432/co
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-up: ## Start Postgres and MinIO, then apply migrations
+up: ## Start Postgres and object storage, then apply migrations
 	$(COMPOSE) up -d --wait
 	$(MAKE) migrate
 

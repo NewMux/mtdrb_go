@@ -16,6 +16,8 @@ coverage.*
 # Local environment
 .env
 .env.local
+.env.production
+deploy/.env.production
 
 # Editors
 .idea/
