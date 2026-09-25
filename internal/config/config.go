@@ -7,6 +7,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +26,11 @@ type Config struct {
 	DBMinConns       int32         //
 	DBConnMaxLife    time.Duration //
 	DBStatementCache bool          //
+	// DBRequireTLS refuses a DATABASE_URL whose sslmode would let the
+	// connection fall back to plaintext. On by default in production; a
+	// single-box install whose database never leaves a private network may
+	// turn it off explicitly.
+	DBRequireTLS bool
 
 	JWTSigningKey   []byte        // HMAC key for access tokens
 	AccessTokenTTL  time.Duration //
@@ -89,7 +96,9 @@ func load(api bool) (Config, error) {
 		required = func(key string) string { return l.str(key, "") }
 	}
 	cfg := Config{
-		Env:             l.str("APP_ENV", "development"),
+		// No default: a production server that forgot APP_ENV would
+		// otherwise come up as development with every check below skipped.
+		Env:             l.required("APP_ENV"),
 		HTTPAddr:        l.str("HTTP_ADDR", ":8080"),
 		ShutdownTimeout: l.dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 
@@ -137,10 +146,44 @@ func load(api bool) (Config, error) {
 	default:
 		l.fail("APP_ENV must be development, staging or production, got %q", cfg.Env)
 	}
+	cfg.DBRequireTLS = l.boolean("DB_REQUIRE_TLS", cfg.IsProduction())
+	switch strings.ToLower(cfg.LogLevel) {
+	case "debug", "info", "warn", "warning", "error":
+	default:
+		l.fail("LOG_LEVEL must be debug, info, warn or error, got %q", cfg.LogLevel)
+	}
+	if cfg.LogFormat != "json" && cfg.LogFormat != "text" {
+		l.fail("LOG_FORMAT must be json or text, got %q", cfg.LogFormat)
+	}
 	if cfg.DBMinConns > cfg.DBMaxConns {
 		l.fail("DB_MIN_CONNS (%d) exceeds DB_MAX_CONNS (%d)", cfg.DBMinConns, cfg.DBMaxConns)
 	}
+	if cfg.DBRequireTLS && cfg.DatabaseURL != "" {
+		switch mode := sslMode(cfg.DatabaseURL); mode {
+		case "require", "verify-ca", "verify-full":
+		default:
+			l.fail("DATABASE_URL must set sslmode=require, verify-ca or verify-full (got %q); set DB_REQUIRE_TLS=false only for a database on a private network", mode)
+		}
+	}
 	if cfg.IsProduction() && api {
+		if isDevSecret(cfg.JWTSigningKey) {
+			l.fail("JWT_SIGNING_KEY is the development placeholder; generate one with: openssl rand -hex 32")
+		}
+		if isDevSecret(cfg.ColumnEncryptionKey) {
+			l.fail("COLUMN_ENCRYPTION_KEY is the development placeholder; generate one with: openssl rand -hex 32")
+		}
+		if cfg.JWTSigningKey != nil && string(cfg.JWTSigningKey) == string(cfg.ColumnEncryptionKey) {
+			l.fail("JWT_SIGNING_KEY and COLUMN_ENCRYPTION_KEY must differ")
+		}
+		if isLocal(cfg.StorageEndpoint) {
+			l.fail("STORAGE_ENDPOINT must not be localhost in production: presigned URLs are opened by the client's device")
+		}
+		if isLocal(cfg.PublicBaseURL) {
+			l.fail("PUBLIC_BASE_URL must not be localhost in production")
+		}
+		if isLocal(cfg.AppURL) {
+			l.fail("APP_URL must not be localhost in production")
+		}
 		if !cfg.StorageUseSSL {
 			l.fail("STORAGE_USE_SSL must be true in production")
 		}
@@ -156,6 +199,8 @@ func load(api bool) (Config, error) {
 		for _, o := range cfg.CORSOrigins {
 			if o == "*" {
 				l.fail("CORS_ORIGINS must not be a wildcard in production")
+			} else if isLocal(o) {
+				l.fail("CORS_ORIGINS must not include localhost in production, got %q", o)
 			}
 		}
 	}
@@ -253,4 +298,46 @@ func (l *loader) list(key, def string) []string {
 		}
 	}
 	return out
+}
+
+// sslMode extracts sslmode from either form of connection string pgx
+// accepts. Absent, pgx behaves as "prefer", which silently accepts plaintext.
+func sslMode(dsn string) string {
+	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
+		if m := u.Query().Get("sslmode"); m != "" {
+			return m
+		}
+		return "prefer"
+	}
+	for _, field := range strings.Fields(dsn) {
+		if k, v, ok := strings.Cut(field, "="); ok && k == "sslmode" {
+			return strings.Trim(v, "'")
+		}
+	}
+	return "prefer"
+}
+
+// isDevSecret recognises the placeholders .env.example ships with. They are
+// long enough to pass the length check, which is exactly why they need one of
+// their own.
+func isDevSecret(v []byte) bool {
+	s := strings.ToLower(string(v))
+	return strings.Contains(s, "change-me") || strings.Contains(s, "dev-only")
+}
+
+// isLocal reports whether an origin, URL or host:port names this machine.
+func isLocal(raw string) bool {
+	host := raw
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "0.0.0.0" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

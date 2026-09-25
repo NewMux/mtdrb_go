@@ -3,6 +3,11 @@ SHELL := /bin/bash
 COMPOSE := docker compose -f deploy/docker-compose.yml
 GO ?= go
 
+# Local settings (copied from .env.example) reach every recipe. Absent, the
+# recipes still run; the API then reports every variable it is missing.
+-include .env
+export
+
 # Migrations run as the owner; the API runs as the RLS-bound app role. Keeping
 # the two URLs distinct is what makes the isolation tests meaningful.
 OWNER_DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/coachpulse?sslmode=disable
@@ -44,10 +49,10 @@ build: ## Compile all binaries
 	$(GO) build ./...
 
 run: ## Start the API against the local stack
-	DATABASE_URL="$(APP_DATABASE_URL)" $(GO) run ./cmd/api
+	APP_ENV="$${APP_ENV:-development}" DATABASE_URL="$(APP_DATABASE_URL)" $(GO) run ./cmd/api
 
 worker: ## Start the recurring-jobs worker
-	DATABASE_URL="$(APP_DATABASE_URL)" $(GO) run ./cmd/worker
+	APP_ENV="$${APP_ENV:-development}" DATABASE_URL="$(APP_DATABASE_URL)" $(GO) run ./cmd/worker
 
 demo-record: ## Re-record the demo build's practice through the real API
 	DEMO_OWNER_URL="$(OWNER_DATABASE_URL)" $(GO) run ./cmd/demo
