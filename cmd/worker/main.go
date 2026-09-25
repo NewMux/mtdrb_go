@@ -22,6 +22,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/db"
 	"github.com/NewMux/mtdrb_go/internal/jobs"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
+	"github.com/NewMux/mtdrb_go/internal/platform/errreport"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
 )
 
@@ -38,16 +39,23 @@ func run() error {
 		return err
 	}
 	log := logger.New(logger.ParseLevel(cfg.LogLevel), logger.Format(cfg.LogFormat))
+	report, flush, err := errreport.Setup(cfg.SentryDSN, cfg.Env, cfg.Release, "worker")
+	if err != nil {
+		return err
+	}
+	defer flush()
+	log = logger.WithReporter(log, report)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	pool, err := db.Open(ctx, db.PoolConfig{
-		URL:             cfg.DatabaseURL,
-		MaxConns:        cfg.DBMaxConns,
-		MinConns:        cfg.DBMinConns,
-		MaxConnLifetime: cfg.DBConnMaxLife,
-		StatementCache:  cfg.DBStatementCache,
+		URL:              cfg.DatabaseURL,
+		MaxConns:         cfg.DBMaxConns,
+		MinConns:         cfg.DBMinConns,
+		MaxConnLifetime:  cfg.DBConnMaxLife,
+		StatementCache:   cfg.DBStatementCache,
+		StatementTimeout: cfg.DBStatementTimeout,
 	})
 	if err != nil {
 		return err

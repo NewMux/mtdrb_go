@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -42,6 +43,11 @@ type PoolConfig struct {
 	MinConns        int32
 	MaxConnLifetime time.Duration
 	StatementCache  bool
+	// StatementTimeout makes Postgres cancel any single statement that runs
+	// longer. A runaway query then fails one request instead of holding a
+	// pooled connection, and the locks it took, until every request queues
+	// behind it. Zero leaves the server's setting alone.
+	StatementTimeout time.Duration
 }
 
 // Open connects and verifies the database is reachable.
@@ -58,6 +64,9 @@ func Open(ctx context.Context, cfg PoolConfig) (*Pool, error) {
 	}
 	if cfg.MaxConnLifetime > 0 {
 		pc.MaxConnLifetime = cfg.MaxConnLifetime
+	}
+	if cfg.StatementTimeout > 0 {
+		pc.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(cfg.StatementTimeout.Milliseconds(), 10)
 	}
 	if !cfg.StatementCache {
 		// Useful behind transaction-pooling proxies such as PgBouncer, which

@@ -19,6 +19,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/httpx"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
+	"github.com/NewMux/mtdrb_go/internal/platform/ratelimit"
 	"github.com/NewMux/mtdrb_go/internal/programming"
 	"github.com/NewMux/mtdrb_go/internal/scheduling"
 	"github.com/NewMux/mtdrb_go/internal/settings"
@@ -70,9 +71,13 @@ func (s *Server) routes(deps Deps) chi.Router {
 	// wraps everything that can panic, and security headers apply even to
 	// error responses produced further up.
 	r.Use(httpx.RequestID)
+	r.Use(httpx.RealIP(s.cfg.TrustProxy))
 	r.Use(httpx.AccessLog(s.log))
 	r.Use(httpx.Recoverer)
 	r.Use(httpx.SecurityHeaders)
+	if s.cfg.IsProduction() {
+		r.Use(httpx.StrictTransportSecurity)
+	}
 	r.Use(httpx.CORS(s.cfg.CORSOrigins))
 
 	r.Get("/healthz", s.healthz)
@@ -82,7 +87,12 @@ func (s *Server) routes(deps Deps) chi.Router {
 	// entirely: the whole point is that a client with no account can open the
 	// link their trainer sent them. Access is controlled by the unguessable
 	// token, and the payload is deliberately narrow.
-	r.Mount("/public", deps.Billing.PublicRoutes())
+	//
+	// The token cannot be guessed, but it can be tried: a caller walking
+	// random tokens gets a handful a minute, not thousands. A client opening
+	// the link their trainer sent never notices.
+	r.With(httpx.RateLimit(ratelimit.New(20, 3*time.Second, nil))).
+		Mount("/public", deps.Billing.PublicRoutes())
 
 	r.Route("/v1", func(v1 chi.Router) {
 		// Unauthenticated: obtaining credentials in the first place.

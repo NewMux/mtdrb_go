@@ -21,11 +21,12 @@ type Config struct {
 	HTTPAddr        string        // listen address for the API
 	ShutdownTimeout time.Duration // grace period for in-flight requests
 
-	DatabaseURL      string        // pgx connection string for the RLS-bound app role
-	DBMaxConns       int32         //
-	DBMinConns       int32         //
-	DBConnMaxLife    time.Duration //
-	DBStatementCache bool          //
+	DatabaseURL        string        // pgx connection string for the RLS-bound app role
+	DBMaxConns         int32         //
+	DBMinConns         int32         //
+	DBConnMaxLife      time.Duration //
+	DBStatementCache   bool          //
+	DBStatementTimeout time.Duration // per-statement limit Postgres enforces
 	// DBRequireTLS refuses a DATABASE_URL whose sslmode would let the
 	// connection fall back to plaintext. On by default in production; a
 	// single-box install whose database never leaves a private network may
@@ -66,10 +67,16 @@ type Config struct {
 	SMTPPort     int
 	SMTPUsername string
 	SMTPPassword string
+	SMTPTLS      string // starttls | implicit | none
 	MailFrom     string
 
 	LogLevel  string
 	LogFormat string
+
+	// SentryDSN, when set, sends every error-level log record to Sentry.
+	SentryDSN string
+	// Release names the build in error reports; the image sets it.
+	Release string
 
 	// JobInterval is how often the leading worker looks for due jobs.
 	JobInterval time.Duration
@@ -105,11 +112,12 @@ func load(api bool) (Config, error) {
 		HTTPAddr:        l.str("HTTP_ADDR", ":8080"),
 		ShutdownTimeout: l.dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 
-		DatabaseURL:      l.required("DATABASE_URL"),
-		DBMaxConns:       int32(l.num("DB_MAX_CONNS", 20)),
-		DBMinConns:       int32(l.num("DB_MIN_CONNS", 2)),
-		DBConnMaxLife:    l.dur("DB_CONN_MAX_LIFETIME", time.Hour),
-		DBStatementCache: l.boolean("DB_STATEMENT_CACHE", true),
+		DatabaseURL:        l.required("DATABASE_URL"),
+		DBMaxConns:         int32(l.num("DB_MAX_CONNS", 20)),
+		DBMinConns:         int32(l.num("DB_MIN_CONNS", 2)),
+		DBConnMaxLife:      l.dur("DB_CONN_MAX_LIFETIME", time.Hour),
+		DBStatementCache:   l.boolean("DB_STATEMENT_CACHE", true),
+		DBStatementTimeout: l.dur("DB_STATEMENT_TIMEOUT", 30*time.Second),
 
 		AccessTokenTTL:  l.dur("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: l.dur("REFRESH_TOKEN_TTL", 30*24*time.Hour),
@@ -132,10 +140,14 @@ func load(api bool) (Config, error) {
 		SMTPPort:     l.num("SMTP_PORT", 587),
 		SMTPUsername: l.str("SMTP_USERNAME", ""),
 		SMTPPassword: l.str("SMTP_PASSWORD", ""),
+		SMTPTLS:      l.str("SMTP_TLS", ""),
 		MailFrom:     l.str("MAIL_FROM", "CoachPulse <no-reply@coachpulse.io>"),
 
 		LogLevel:  l.str("LOG_LEVEL", "info"),
 		LogFormat: l.str("LOG_FORMAT", "json"),
+
+		SentryDSN: l.str("SENTRY_DSN", ""),
+		Release:   l.str("RELEASE", "dev"),
 
 		JobInterval: l.dur("JOB_INTERVAL", time.Minute),
 	}
@@ -158,6 +170,17 @@ func load(api bool) (Config, error) {
 	}
 	if cfg.LogFormat != "json" && cfg.LogFormat != "text" {
 		l.fail("LOG_FORMAT must be json or text, got %q", cfg.LogFormat)
+	}
+	if cfg.SMTPTLS == "" {
+		cfg.SMTPTLS = "starttls"
+		if cfg.SMTPPort == 465 {
+			cfg.SMTPTLS = "implicit"
+		}
+	}
+	switch cfg.SMTPTLS {
+	case "starttls", "implicit", "none":
+	default:
+		l.fail("SMTP_TLS must be starttls, implicit or none, got %q", cfg.SMTPTLS)
 	}
 	if cfg.DBMinConns > cfg.DBMaxConns {
 		l.fail("DB_MIN_CONNS (%d) exceeds DB_MAX_CONNS (%d)", cfg.DBMinConns, cfg.DBMaxConns)
@@ -199,6 +222,9 @@ func load(api bool) (Config, error) {
 		}
 		if cfg.SMTPHost == "" {
 			l.fail("SMTP_HOST is required in production: password resets must be delivered, not logged")
+		}
+		if cfg.SMTPTLS == "none" {
+			l.fail("SMTP_TLS=none is not allowed in production: a reset link sent in the clear is a password sent in the clear")
 		}
 		for _, o := range cfg.CORSOrigins {
 			if o == "*" {

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -20,10 +19,6 @@ type HandlerOptions struct {
 	// SecureCookies marks the web refresh cookie Secure. Off only for local
 	// development over plain http, where a Secure cookie would never be sent.
 	SecureCookies bool
-	// TrustProxy takes the caller's address from X-Forwarded-For, for an API
-	// behind a load balancer. Off by default: believed from anyone else, the
-	// header lets a guesser pick a fresh address for every attempt.
-	TrustProxy bool
 	// Limiters default to sensible buckets when nil.
 	PerAddress *ratelimit.Limiter
 	PerAccount *ratelimit.Limiter
@@ -84,23 +79,9 @@ func (h *Handler) AuthenticatedRoutes() http.Handler {
 // ---------------------------------------------------------------------------
 // Rate limiting
 
-func (h *Handler) clientAddress(r *http.Request) string {
-	if h.opts.TrustProxy {
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			first, _, _ := strings.Cut(forwarded, ",")
-			return strings.TrimSpace(first)
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 func (h *Handler) limitByAddress(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !h.opts.PerAddress.Allow(h.clientAddress(r)) {
+		if !h.opts.PerAddress.Allow(httpx.ClientAddress(r)) {
 			httpx.Error(w, r, errs.RateLimited("too many attempts; wait a minute and try again"))
 			return
 		}

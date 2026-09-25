@@ -55,10 +55,9 @@ type Options struct {
 	// those links point.
 	Mailer mail.Sender
 	AppURL string
-	// SecureCookies and TrustProxy are the auth transport's environment
-	// switches; see auth.HandlerOptions.
+	// SecureCookies is the auth transport's environment switch; see
+	// auth.HandlerOptions.
 	SecureCookies bool
-	TrustProxy    bool
 }
 
 // Services is every domain service, built once.
@@ -94,7 +93,7 @@ func New(o Options) *Services {
 
 	s := &Services{
 		Pool: o.Pool, Clock: wall, publicBaseURL: o.PublicBaseURL,
-		authOptions: auth.HandlerOptions{SecureCookies: o.SecureCookies, TrustProxy: o.TrustProxy},
+		authOptions: auth.HandlerOptions{SecureCookies: o.SecureCookies},
 	}
 	s.Issuer = auth.NewTokenIssuer(o.JWTSigningKey, o.AccessTokenTTL, o.RefreshTokenTTL, wall)
 
@@ -122,6 +121,7 @@ func New(o Options) *Services {
 func (s *Services) Jobs() []jobs.Job {
 	return []jobs.Job{
 		jobs.PackageExpiry(s.Billing),
+		jobs.Housekeeping(),
 	}
 }
 

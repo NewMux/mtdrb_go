@@ -3,14 +3,17 @@ package httpx
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/NewMux/mtdrb_go/internal/platform/errs"
 	"github.com/NewMux/mtdrb_go/internal/platform/ids"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
+	"github.com/NewMux/mtdrb_go/internal/platform/ratelimit"
 	"github.com/NewMux/mtdrb_go/internal/tenancy"
 )
 
@@ -158,6 +161,71 @@ func RequireTrainer(next http.Handler) http.Handler {
 			Error(w, r, err)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type clientAddressKey struct{}
+
+// RealIP records the caller's address for everything downstream: sign-in
+// rate limits, the /public limiter and the address on a signed waiver.
+//
+// With trustProxy set, the address is the right-most X-Forwarded-For entry:
+// the one the proxy in front of us appended. Everything to its left arrived
+// from the caller and is theirs to invent, so taking the left-most entry, as
+// is common, would let a guesser choose a fresh address for every attempt,
+// and would put a forged address into an evidentiary record. Only set it
+// when every request reaches the API through that proxy.
+func RealIP(trustProxy bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			addr := r.RemoteAddr
+			if host, _, err := net.SplitHostPort(addr); err == nil {
+				addr = host
+			}
+			if trustProxy {
+				hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+				if last := strings.TrimSpace(hops[len(hops)-1]); net.ParseIP(last) != nil {
+					addr = last
+				}
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientAddressKey{}, addr)))
+		})
+	}
+}
+
+// ClientAddress is the caller's address as RealIP decided it, or the
+// connection's peer when RealIP is not mounted.
+func ClientAddress(r *http.Request) string {
+	if addr, ok := r.Context().Value(clientAddressKey{}).(string); ok {
+		return addr
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// RateLimit refuses a caller who has used up their bucket in limiter.
+func RateLimit(limiter *ratelimit.Limiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !limiter.Allow(ClientAddress(r)) {
+				Error(w, r, errs.RateLimited("too many requests; wait a minute and try again"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// StrictTransportSecurity tells browsers to reach this origin only over
+// HTTPS for a year. Sent only in production, where config has already
+// required https URLs: sent from a plain-http development server it would
+// pin localhost to https in the developer's browser.
+func StrictTransportSecurity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		next.ServeHTTP(w, r)
 	})
 }

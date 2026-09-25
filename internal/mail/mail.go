@@ -41,13 +41,28 @@ func (l LogSender) Send(ctx context.Context, m Message) error {
 	return nil
 }
 
-// SMTPSender delivers over SMTP with STARTTLS where the server offers it.
+// TLS modes for SMTPSender.
+const (
+	// TLSStartTLS upgrades a plain connection, and refuses to send if the
+	// server does not offer the upgrade. Used "where offered", STARTTLS is
+	// no protection: anyone on the path deletes the offer from the greeting
+	// and reads the reset link in the clear.
+	TLSStartTLS = "starttls"
+	// TLSImplicit speaks TLS from the first byte, as on port 465.
+	TLSImplicit = "implicit"
+	// TLSNone sends in the clear: a local mail catcher only. Config refuses
+	// it in production.
+	TLSNone = "none"
+)
+
+// SMTPSender delivers over SMTP.
 type SMTPSender struct {
 	Host     string
 	Port     int
 	Username string
 	Password string
 	From     string
+	TLS      string // one of the TLS modes; empty means TLSStartTLS
 }
 
 // Send delivers the message.
@@ -57,8 +72,15 @@ func (s SMTPSender) Send(ctx context.Context, m Message) error {
 		return fmt.Errorf("mail: refusing a header containing a line break")
 	}
 	addr := net.JoinHostPort(s.Host, fmt.Sprint(s.Port))
-	dialer := net.Dialer{Timeout: 10 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	tlsConfig := &tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	var conn net.Conn
+	var err error
+	if s.TLS == TLSImplicit {
+		conn, err = (&tls.Dialer{NetDialer: dialer, Config: tlsConfig}).DialContext(ctx, "tcp", addr)
+	} else {
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
+	}
 	if err != nil {
 		return fmt.Errorf("mail: dial %s: %w", addr, err)
 	}
@@ -69,8 +91,11 @@ func (s SMTPSender) Send(ctx context.Context, m Message) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err := client.StartTLS(&tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}); err != nil {
+	if s.TLS == "" || s.TLS == TLSStartTLS {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("mail: %s does not offer STARTTLS; refusing to send in the clear", addr)
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
 			return fmt.Errorf("mail: starttls: %w", err)
 		}
 	}

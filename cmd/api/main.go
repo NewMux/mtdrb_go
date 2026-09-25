@@ -16,6 +16,7 @@ import (
 	"github.com/NewMux/mtdrb_go/internal/mail"
 	"github.com/NewMux/mtdrb_go/internal/media"
 	"github.com/NewMux/mtdrb_go/internal/platform/clock"
+	"github.com/NewMux/mtdrb_go/internal/platform/errreport"
 	"github.com/NewMux/mtdrb_go/internal/platform/logger"
 )
 
@@ -33,6 +34,12 @@ func run() error {
 	}
 
 	log := logger.New(logger.ParseLevel(cfg.LogLevel), logger.Format(cfg.LogFormat))
+	report, flush, err := errreport.Setup(cfg.SentryDSN, cfg.Env, cfg.Release, "api")
+	if err != nil {
+		return err
+	}
+	defer flush()
+	log = logger.WithReporter(log, report)
 
 	// Cancelled on SIGINT/SIGTERM, which starts a graceful drain rather than
 	// dropping in-flight requests — a request mid-ledger-post should finish.
@@ -40,11 +47,12 @@ func run() error {
 	defer stop()
 
 	pool, err := db.Open(ctx, db.PoolConfig{
-		URL:             cfg.DatabaseURL,
-		MaxConns:        cfg.DBMaxConns,
-		MinConns:        cfg.DBMinConns,
-		MaxConnLifetime: cfg.DBConnMaxLife,
-		StatementCache:  cfg.DBStatementCache,
+		URL:              cfg.DatabaseURL,
+		MaxConns:         cfg.DBMaxConns,
+		MinConns:         cfg.DBMinConns,
+		MaxConnLifetime:  cfg.DBConnMaxLife,
+		StatementCache:   cfg.DBStatementCache,
+		StatementTimeout: cfg.DBStatementTimeout,
 	})
 	if err != nil {
 		return err
@@ -74,6 +82,7 @@ func run() error {
 		mailer = mail.SMTPSender{
 			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
 			Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.MailFrom,
+			TLS: cfg.SMTPTLS,
 		}
 	}
 
@@ -90,7 +99,6 @@ func run() error {
 		Mailer:          mailer,
 		AppURL:          cfg.AppURL,
 		SecureCookies:   cfg.IsProduction() || strings.HasPrefix(cfg.PublicBaseURL, "https://"),
-		TrustProxy:      cfg.TrustProxy,
 	})
 	srv := api.New(cfg, pool, log, services.Handlers())
 

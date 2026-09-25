@@ -204,6 +204,8 @@ func TestProductionRefusesWhatOnlySuitsALaptop(t *testing.T) {
 		{"local public url", "PUBLIC_BASE_URL", "https://localhost", "PUBLIC_BASE_URL must not be localhost"},
 		{"bad log level", "LOG_LEVEL", "verbose", "LOG_LEVEL"},
 		{"bad log format", "LOG_FORMAT", "xml", "LOG_FORMAT"},
+		{"plaintext smtp", "SMTP_TLS", "none", "SMTP_TLS=none is not allowed"},
+		{"unknown smtp tls", "SMTP_TLS", "maybe", "SMTP_TLS must be"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
