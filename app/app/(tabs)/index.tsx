@@ -2,52 +2,72 @@
  * Today.
  *
  * The first screen, and the one the product is really about: who is in front
- * of me, and what happens when this session ends.
+ * of me, what are we doing, and what happens when this session ends.
  *
- * Tapping a client opens their outcome buttons in place rather than pushing a
- * screen. Marking attendance is done between sets, often one-handed, and a
- * navigation animation for a two-second decision is a navigation animation the
- * trainer is standing still for.
+ * Three layers, top to bottom. The day at a glance (a ring that fills as the
+ * roster is marked). The nudges — the few things worth acting on today, each
+ * one tap from its fix. And the schedule, where tapping a session opens its
+ * outcome buttons in place: marking attendance happens between sets, and a
+ * navigation animation for a two-second decision is time the trainer stands
+ * still for.
  */
 
 import React, { useCallback, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
-import { markAttendance, startWorkout } from '@/features/actions';
-import { openWorkout, todaysRoster, type RosterEntry } from '@/features/queries';
+import { markAttendance } from '@/features/actions';
+import { nudges, weekGlance, type Nudge } from '@/features/insights';
+import { nextSession } from '@/features/programs';
+import { todaysRoster, type RosterEntry } from '@/features/queries';
+import { openOrStartWorkout } from '@/features/workflow';
 import type { AttendanceStatus } from '@/api/types';
 import { useApp, useQuery } from '@/state/app';
+import { Ring } from '@/ui/charts';
 import {
-  Body, Button, Caption, Card, Chip, Empty, Heading, Label, Metric,
-  Pill, Row, Screen, Spacer, Title,
+  Avatar, Button, Card, EmptyState, HStack, IconButton, IconTile, ListRow, Page, Section,
+  Spacer, Stat, StatGrid, T, Tag, tap, VStack,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
 import { clockTime } from '@/ui/format';
-import { colors, radius, space, type as typography } from '@/ui/theme';
+import type { IconName } from '@/ui/icon';
+import { makeStyles, radius, space, useTheme, type Hue } from '@/ui/theme';
 
-const OUTCOMES: { status: AttendanceStatus; label: string }[] = [
-  { status: 'completed', label: 'Completed' },
-  { status: 'no_show', label: 'No-show' },
-  { status: 'late_cancel', label: 'Late cancel' },
-  { status: 'early_cancel', label: 'Early cancel' },
+const OUTCOMES: { status: AttendanceStatus; label: string; icon: IconName; hue: Hue }[] = [
+  { status: 'completed', label: 'Attended', icon: 'checkCircle', hue: 'green' },
+  { status: 'no_show', label: 'No-show', icon: 'closeCircle', hue: 'red' },
+  { status: 'late_cancel', label: 'Late cancel', icon: 'clock', hue: 'orange' },
+  { status: 'early_cancel', label: 'Cancelled', icon: 'calendar', hue: 'gray' },
 ];
+
+interface Entry extends RosterEntry {
+  plan: string | null;
+}
 
 export default function TodayScreen() {
   const { db, account, touch, syncNow, sync } = useApp();
   const router = useRouter();
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const s = useStyles();
+  const [open, setOpen] = useState<string | null>(null);
+  const [allTips, setAllTips] = useState(false);
 
-  const roster = useQuery((database) => todaysRoster(database), []);
+  const roster = useQuery(async (database): Promise<Entry[]> => {
+    const rows = await todaysRoster(database);
+    return Promise.all(rows.map(async (r) => {
+      const next = await nextSession(database, r.clientId);
+      return { ...r, plan: next ? `${next.day.name} · Week ${next.week}` : null };
+    }));
+  }, []);
+  const tips = useQuery((database) => nudges(database), []);
+  const week = useQuery((database) => weekGlance(database), []);
 
-  // Coming back from a workout should show the attendance mark that was made
-  // there, not the roster as it looked when the screen was last mounted.
-  useFocusEffect(useCallback(() => { roster.reload(); }, [roster.reload]));
+  useFocusEffect(useCallback(() => { roster.reload(); tips.reload(); week.reload(); }, [roster.reload, tips.reload, week.reload]));
 
-  const mark = async (entry: RosterEntry, status: AttendanceStatus, allowOverdraft = false) => {
+  const mark = async (entry: Entry, status: AttendanceStatus, allowOverdraft = false) => {
     if (!db) return;
+    tap(status === 'completed' ? 'success' : 'medium');
     await markAttendance(db, entry.attendeeId, status, { allowOverdraft });
-    setExpanded(null);
+    setOpen(null);
     touch();
     void syncNow();
   };
@@ -57,223 +77,270 @@ export default function TodayScreen() {
    *
    * The local balance is a mirror and may be stale, so this is a warning and
    * not a refusal — the server holds the real answer and will refuse if it has
-   * to. What the trainer gets is the choice the PRD asks for: sell a renewal,
-   * or let this one run into overdraft, decided before the client leaves.
+   * to. What the trainer gets is the choice: sell a renewal, or let this one
+   * run into overdraft, decided before the client leaves.
    */
-  const confirmCompleted = (entry: RosterEntry) => {
-    if (entry.creditsRemaining > 0) {
-      void mark(entry, 'completed');
+  const attended = (entry: Entry) => {
+    if (entry.creditsRemaining > 0) { void mark(entry, 'completed'); return; }
+    const renew = () => router.push({ pathname: '/sell-package', params: { client: entry.clientId, name: entry.clientName } });
+    const overdraft = () => { void mark(entry, 'completed', true); };
+    if (Platform.OS === 'web') {
+      // Alert with buttons is a no-op on web; confirm is the closest honest equivalent.
+      // eslint-disable-next-line no-alert
+      if (window.confirm(`${entry.clientName} has no sessions left.\n\nOK records this one against an overdraft. Cancel to renew their package instead.`)) overdraft();
+      else renew();
       return;
     }
     Alert.alert(
-      'No credits left',
-      `${entry.clientName} has no credits remaining. Renew the package, or record this session against an overdraft.`,
+      'No sessions left',
+      `${entry.clientName} has used their pack. Renew now, or record this session as an overdraft.`,
       [
+        { text: 'Renew Package', onPress: renew },
+        { text: 'Record as Overdraft', onPress: overdraft },
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Renew package',
-          onPress: () => router.push({ pathname: '/client/[id]', params: { id: entry.clientId } }),
-        },
-        { text: 'Complete anyway', onPress: () => { void mark(entry, 'completed', true); } },
       ],
     );
   };
 
-  const toWorkout = async (entry: RosterEntry) => {
+  const train = async (entry: Entry) => {
     if (!db) return;
-    // Resume rather than open a second workout: a trainer who backs out to
-    // check the roster mid-session should return to the sets already logged.
-    const existing = await openWorkout(db, entry.clientId);
-    const id = existing?.id ?? await startWorkout(db, entry.clientId, { sessionId: entry.sessionId });
-    if (!existing) touch();
-    router.push({
-      pathname: '/workout/[id]',
-      params: { id, client: entry.clientId, name: entry.clientName },
-    });
+    const { id, created } = await openOrStartWorkout(db, entry.clientId, { sessionId: entry.sessionId });
+    if (created) touch();
+    router.push({ pathname: '/workout/[id]', params: { id, client: entry.clientId, name: entry.clientName } });
+  };
+
+  const act = (n: Nudge) => {
+    switch (n.kind) {
+      case 'overdue': router.push('/business'); break;
+      case 'unmarked': router.push('/calendar'); break;
+      case 'renew':
+        if (n.clientId) router.push({ pathname: '/client/[id]', params: { id: n.clientId } });
+        else router.push({ pathname: '/clients', params: { filter: 'low' } });
+        break;
+      default:
+        if (n.clientId) router.push({ pathname: '/client/[id]', params: { id: n.clientId } });
+    }
   };
 
   const entries = roster.data ?? [];
   const marked = entries.filter((e) => e.status !== 'scheduled').length;
-  const firstName = (account?.display_name ?? '').split(' ')[0] || 'there';
+  const next = entries.find((e) => e.status === 'scheduled' && new Date(e.endsAt) > new Date());
+  const firstName = (account?.display_name ?? '').split(' ')[0] || 'Coach';
+  const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 
   return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        refreshControl={
-          <RefreshControl
-            refreshing={sync.running}
-            onRefresh={() => { void syncNow(); }}
-            tintColor={colors.inkMuted}
-          />
-        }
-      >
-        <Row style={{ justifyContent: 'space-between' }}>
-          <Row>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarGlyph}>{firstName.slice(0, 1).toUpperCase()}</Text>
-            </View>
-            <View>
-              <Title>Hello {firstName}</Title>
-              <Caption>
-                {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
-              </Caption>
-            </View>
-          </Row>
+    <Page
+      title="Today"
+      eyebrow={today}
+      refreshing={sync.running}
+      onRefresh={() => { void syncNow(); }}
+      trailing={
+        <>
           <SyncBadge />
-        </Row>
+          <IconButton icon="plus" label="Create" onPress={() => router.push('/quick')} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Settings" onPress={() => { tap(); router.push('/settings'); }}>
+            <Avatar name={account?.display_name ?? 'Coach'} size={40} />
+          </Pressable>
+        </>
+      }
+    >
+      {/* The day at a glance. */}
+      <Card style={s.hero}>
+        <HStack gap={space.lg}>
+          <Ring value={entries.length ? marked / entries.length : 0} hue="green" size={76} stroke={10}>
+            <T variant="headline">{entries.length ? `${marked}/${entries.length}` : '0'}</T>
+          </Ring>
+          <VStack gap={2} style={{ flex: 1 }}>
+            <T variant="title3" weight="700">
+              {entries.length === 0 ? `A clear day, ${firstName}` :
+                marked === entries.length ? 'All sessions marked' : `${entries.length - marked} to go`}
+            </T>
+            <T variant="subhead" tone="label2">
+              {next
+                ? `Next: ${next.clientName} at ${clockTime(next.startsAt)}`
+                : entries.length === 0 ? 'Nothing booked today.' : 'Nothing left on the schedule.'}
+            </T>
+          </VStack>
+        </HStack>
+      </Card>
 
-        <Spacer size={space.xl} />
-
-        {/* The day at a glance. Lime because getting through the roster is the
-            job this screen exists for. */}
-        <Card tone="accent">
-          <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <Metric
-              value={String(marked)}
-              unit={`/ ${entries.length}`}
-              label="sessions marked"
-              tone="onAccent"
+      {(tips.data ?? []).length > 0 ? (
+        <Section
+          title="For You"
+          action={(tips.data ?? []).length > TIP_LIMIT ? (allTips ? 'Show Less' : `Show All ${(tips.data ?? []).length}`) : undefined}
+          onAction={() => setAllTips(!allTips)}
+        >
+          {(tips.data ?? []).slice(0, allTips ? undefined : TIP_LIMIT).map((n, i) => (
+            <ListRow
+              key={n.key}
+              first={i === 0}
+              leading={<IconTile icon={NUDGE_ICON[n.kind]} hue={NUDGE_HUE[n.kind]} />}
+              title={n.title}
+              subtitle={n.detail}
+              lines={2}
+              onPress={() => act(n)}
             />
-            <Heading onAccent>
-              {entries.length === 0 ? 'Clear day' : marked === entries.length ? 'All done' : `${entries.length - marked} to go`}
-            </Heading>
-          </Row>
-          <Spacer />
-          <View style={styles.progressOnAccent}>
-            <View
-              style={[
-                styles.progressOnAccentFill,
-                { width: `${entries.length === 0 ? 0 : (marked / entries.length) * 100}%` },
-              ]}
-            />
-          </View>
-        </Card>
+          ))}
+        </Section>
+      ) : null}
 
-        <Spacer size={space.xl} />
-        <Label>Roster</Label>
-        <Spacer />
-
+      <Section title="Schedule" action="Calendar" onAction={() => router.push('/calendar')} plain>
         {entries.length === 0 ? (
-          <Empty
-            title="Nothing booked"
-            detail={roster.loading ? 'Loading…' : 'Sessions appear here as they sync.'}
-          />
+          <Card>
+            <EmptyState
+              icon="calendar"
+              title="Nothing booked"
+              message={roster.loading ? 'Loading…' : 'Book a session and it shows up here.'}
+              action="Book a Session"
+              onAction={() => router.push('/session/new')}
+            />
+          </Card>
         ) : (
-          entries.map((entry) => (
-            <View key={entry.attendeeId} style={{ marginBottom: space.md }}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${entry.clientName} at ${clockTime(entry.startsAt)}`}
-                onPress={() => setExpanded(expanded === entry.attendeeId ? null : entry.attendeeId)}
-              >
-                <Card>
-                  <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <View style={{ flex: 1 }}>
-                      <Row style={{ gap: space.md }}>
-                        <Text style={styles.time}>{clockTime(entry.startsAt)}</Text>
-                        <Text style={styles.name} numberOfLines={1}>{entry.clientName}</Text>
-                      </Row>
-                      <Spacer size={space.sm} />
-                      <Row style={{ gap: space.sm }}>
-                        <StatusPill status={entry.status} />
-                        <Caption>
-                          {[entry.sessionTypeName, entry.location].filter(Boolean).join(' · ') || 'Session'}
-                        </Caption>
-                      </Row>
+          <VStack gap={space.md}>
+            {entries.map((entry) => {
+              const expanded = open === entry.attendeeId;
+              const done = entry.status !== 'scheduled';
+              return (
+                <Card key={entry.attendeeId} padded={false}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${entry.clientName} at ${clockTime(entry.startsAt)}`}
+                    accessibilityState={{ expanded }}
+                    onPress={() => { tap('select'); setOpen(expanded ? null : entry.attendeeId); }}
+                    style={({ pressed }) => [s.session, pressed && { opacity: 0.7 }]}
+                  >
+                    <View style={s.time}>
+                      <T variant="headline" tone={done ? 'label3' : 'label'}>{clockTime(entry.startsAt)}</T>
+                      <T variant="caption" tone="label3">{minutes(entry.startsAt, entry.endsAt)}</T>
                     </View>
-                    <Chip
-                      label={entry.creditsRemaining > 0 ? `${entry.creditsRemaining}` : '0'}
-                      tone={entry.creditsRemaining > 0 ? 'accent' : 'danger'}
-                    />
-                  </Row>
+                    <View style={s.rail} />
+                    <Avatar name={entry.clientName} size={42} />
+                    <VStack gap={3} style={{ flex: 1 }}>
+                      <T variant="headline" lines={1} tone={done ? 'label2' : 'label'}>{entry.clientName}</T>
+                      <T variant="footnote" tone="label2" lines={1}>
+                        {entry.plan ?? ([entry.sessionTypeName, entry.location].filter(Boolean).join(' · ') || 'Session')}
+                      </T>
+                      <HStack gap={6}>
+                        <StatusTag status={entry.status} />
+                        <Tag
+                          label={entry.creditsRemaining <= 0 ? (entry.creditsRemaining < 0 ? `${entry.creditsRemaining} owed` : 'No sessions left') : `${entry.creditsRemaining} left`}
+                          hue={entry.creditsRemaining <= 0 ? 'red' : entry.creditsRemaining <= 2 ? 'orange' : 'gray'}
+                        />
+                      </HStack>
+                    </VStack>
+                  </Pressable>
 
-                  {expanded === entry.attendeeId ? (
-                    <>
-                      <Spacer size={space.lg} />
-                      <View style={styles.grid}>
-                        {OUTCOMES.map((outcome) => (
-                          <Button
-                            key={outcome.status}
-                            label={outcome.label}
-                            tone={outcome.status === 'completed' ? 'primary' : 'default'}
-                            style={styles.gridItem}
+                  {expanded ? (
+                    <View style={s.drawer}>
+                      <View style={s.outcomes}>
+                        {OUTCOMES.map((o) => (
+                          <Outcome
+                            key={o.status}
+                            {...o}
+                            active={entry.status === o.status}
                             onPress={() => {
-                              if (outcome.status === 'completed') confirmCompleted(entry);
-                              else void mark(entry, outcome.status);
+                              if (o.status === 'completed') attended(entry);
+                              else void mark(entry, o.status);
                             }}
                           />
                         ))}
                       </View>
-                      <Spacer size={space.sm} />
-                      <Row>
-                        <Button
-                          label="Log workout"
-                          style={{ flex: 1 }}
-                          onPress={() => { void toWorkout(entry); }}
-                        />
+                      <HStack gap={space.sm}>
+                        <Button label="Start Workout" icon="play" variant="filled" style={{ flex: 1 }} full onPress={() => { void train(entry); }} />
                         <Button
                           label="Profile"
-                          tone="quiet"
+                          icon="person"
+                          variant="gray"
                           onPress={() => router.push({ pathname: '/client/[id]', params: { id: entry.clientId } })}
                         />
-                      </Row>
-                    </>
+                      </HStack>
+                    </View>
                   ) : null}
                 </Card>
-              </Pressable>
-            </View>
-          ))
+              );
+            })}
+          </VStack>
         )}
+      </Section>
 
-        {sync.pending > 0 ? (
-          <>
-            <Spacer />
-            <Body muted>
-              {sync.pending} change{sync.pending === 1 ? '' : 's'} waiting to reach the server. They are
-              safe on this device and will send themselves.
-            </Body>
-          </>
-        ) : null}
-      </ScrollView>
-    </Screen>
+      <Section title="This Week" plain>
+        <StatGrid>
+          <Stat icon="calendar" hue="tint" label="Booked" value={String(week.data?.booked ?? 0)} footnote={`${week.data?.remaining ?? 0} still to come`} />
+          <Stat icon="checkCircle" hue="green" label="Attended" value={String(week.data?.completed ?? 0)} />
+          <Stat
+            icon="heartPulse" hue="pink" label="Attendance"
+            value={week.data?.attendanceRate == null ? '—' : `${Math.round(week.data.attendanceRate * 100)}`}
+            unit={week.data?.attendanceRate == null ? undefined : '%'}
+            footnote="last 30 days"
+          />
+          <Stat icon="strength" hue="orange" label="Workouts" value={String(week.data?.workoutsLogged ?? 0)} footnote="logged this week" />
+        </StatGrid>
+      </Section>
+
+      {sync.pending > 0 ? (
+        <T variant="footnote" tone="label2" align="center" style={{ marginTop: space.xl, paddingHorizontal: space.xxl }}>
+          {sync.pending} change{sync.pending === 1 ? '' : 's'} saved on this device, waiting to send.
+        </T>
+      ) : null}
+      <Spacer size={space.lg} />
+    </Page>
   );
 }
 
-function StatusPill({ status }: { status: AttendanceStatus }) {
+/** Enough to act on between clients; the rest wait behind "Show All". */
+const TIP_LIMIT = 4;
+
+const NUDGE_ICON: Record<Nudge['kind'], IconName> = {
+  renew: 'cart', overdue: 'invoice', inactive: 'message', unmarked: 'checkCircle', clearance: 'shield',
+};
+const NUDGE_HUE: Record<Nudge['kind'], Hue> = {
+  renew: 'orange', overdue: 'red', inactive: 'indigo', unmarked: 'green', clearance: 'pink',
+};
+
+function minutes(start: string, end: string): string {
+  const m = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60_000);
+  return Number.isFinite(m) && m > 0 ? `${m} min` : '';
+}
+
+function StatusTag({ status }: { status: AttendanceStatus }) {
   switch (status) {
-    case 'completed': return <Pill label="Completed" tone="success" />;
-    case 'no_show': return <Pill label="No-show" tone="danger" />;
-    case 'late_cancel': return <Pill label="Late cancel" tone="warning" />;
-    case 'early_cancel': return <Pill label="Early cancel" tone="muted" />;
-    default: return <Pill label="Scheduled" tone="muted" />;
+    case 'completed': return <Tag label="Attended" hue="green" icon="check" />;
+    case 'no_show': return <Tag label="No-show" hue="red" />;
+    case 'late_cancel': return <Tag label="Late cancel" hue="orange" />;
+    case 'early_cancel': return <Tag label="Cancelled" hue="gray" />;
+    default: return <Tag label="Booked" hue="tint" />;
   }
 }
 
-const styles = StyleSheet.create({
-  // Bottom padding clears the tab bar and the circle straddling it.
-  scroll: { padding: space.lg, paddingTop: space.xl, paddingBottom: 176 },
+function Outcome({
+  label, icon, hue, active, onPress,
+}: { label: string; icon: IconName; hue: Hue; active: boolean; onPress: () => void }) {
+  const { c } = useTheme();
+  const s = useStyles();
+  const color = (c as unknown as Record<string, string>)[hue]!;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={({ pressed }) => [s.outcome, active && { backgroundColor: color }, pressed && { opacity: 0.7, transform: [{ scale: 0.96 }] }]}
+    >
+      <IconTile icon={icon} hue={active ? 'gray' : hue} size={30} />
+      <T variant="caption" weight="600" style={active ? { color: '#FFF' } : undefined} align="center">{label}</T>
+    </Pressable>
+  );
+}
 
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
+const useStyles = makeStyles((c) => ({
+  hero: { marginHorizontal: space.lg },
+  session: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg },
+  time: { width: 52, alignItems: 'flex-start' },
+  rail: { width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: c.tint, opacity: 0.8 },
+  drawer: { paddingHorizontal: space.lg, paddingBottom: space.lg, gap: space.md },
+  outcomes: { flexDirection: 'row', gap: space.sm },
+  outcome: {
+    flex: 1, alignItems: 'center', gap: 6, paddingVertical: space.md, borderRadius: radius.md,
+    backgroundColor: c.surface2,
   },
-  avatarGlyph: { ...typography.title, color: colors.onAccent },
-
-  progressOnAccent: {
-    height: 8,
-    borderRadius: radius.pill,
-    backgroundColor: 'rgba(18,18,18,0.18)',
-    overflow: 'hidden',
-  },
-  progressOnAccentFill: { height: '100%', borderRadius: radius.pill, backgroundColor: colors.onAccent },
-
-  time: { ...typography.heading, color: colors.inkMuted, minWidth: 48 },
-  name: { ...typography.title, color: colors.ink, flexShrink: 1 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  gridItem: { flexGrow: 1, flexBasis: '45%' },
-});
+}));

@@ -12,16 +12,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError, NetworkError } from '@/api/client';
 import { ErrorCode } from '@/api/types';
 import { useApp } from '@/state/app';
-import {
-  Banner, Body, Button, Caption, Field, Screen, Spacer, Title,
-} from '@/ui/components';
-import { space } from '@/ui/theme';
+import { Banner, Button, Field, IconTile, Spacer, T, VStack } from '@/ui/components';
+import { space, useTheme } from '@/ui/theme';
 
 type Mode = 'sign-in' | 'sign-up';
 
 export default function SignInScreen() {
   const { signIn, signUp } = useApp();
   const insets = useSafeAreaInsets();
+  const { c } = useTheme();
 
   const [mode, setMode] = useState<Mode>('sign-in');
   const [email, setEmail] = useState('');
@@ -58,36 +57,37 @@ export default function SignInScreen() {
     && (mode === 'sign-in' || displayName.trim() !== '');
 
   return (
-    <Screen>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: c.bg }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={{
+          padding: space.xl,
+          paddingTop: insets.top + space.xxl,
+          paddingBottom: insets.bottom + space.xl,
+          flexGrow: 1,
+          justifyContent: 'center',
+          width: '100%',
+          maxWidth: 460,
+          alignSelf: 'center',
+        }}
+        keyboardShouldPersistTaps="handled"
       >
-        <ScrollView
-          contentContainerStyle={{
-            padding: space.xl,
-            paddingTop: insets.top + space.xxl,
-            flexGrow: 1,
-            justifyContent: 'center',
-          }}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Title>CoachPulse</Title>
-          <Spacer size={space.xs} />
-          <Body muted>
+        <View style={{ alignItems: 'center', marginBottom: space.xl }}>
+          <IconTile icon="heartPulse" hue="tint" size={72} />
+          <Spacer size={space.lg} />
+          <T variant="largeTitle" align="center">CoachPulse</T>
+          <T variant="body" tone="label2" align="center" style={{ marginTop: 6 }}>
             {mode === 'sign-in'
               ? 'Sign in to your practice.'
-              : 'Set up your practice. Your books start balanced.'}
-          </Body>
-          <Spacer size={space.xl} />
+              : 'Clients, programs, calendar and books — in one place.'}
+          </T>
+        </View>
 
-          {error ? (
-            <>
-              <Banner message={error} tone="danger" />
-              <Spacer />
-            </>
-          ) : null}
+        {error ? <Banner message={error} tone="red" style={{ marginBottom: space.lg }} /> : null}
 
+        <VStack gap={space.md}>
           <Field
             label="Email"
             value={email}
@@ -96,7 +96,6 @@ export default function SignInScreen() {
             autoCapitalize="none"
             placeholder="you@example.com"
           />
-          <Spacer />
           <Field
             label="Password"
             value={password}
@@ -107,14 +106,7 @@ export default function SignInScreen() {
 
           {mode === 'sign-up' ? (
             <>
-              <Spacer />
-              <Field
-                label="Your name"
-                value={displayName}
-                onChangeText={setDisplayName}
-                autoCapitalize="words"
-              />
-              <Spacer />
+              <Field label="Your name" value={displayName} onChangeText={setDisplayName} autoCapitalize="words" />
               <Field
                 label="Business name"
                 value={businessName}
@@ -122,39 +114,39 @@ export default function SignInScreen() {
                 autoCapitalize="words"
                 hint="Appears on the invoices your clients see."
               />
-              <Spacer />
               <Field
                 label="Currency"
                 value={currency}
                 onChangeText={setCurrency}
                 autoCapitalize="none"
-                hint="Three letters, e.g. EUR. Your ledger is kept in this currency."
+                hint="Three letters, e.g. EUR. Your books are kept in this currency."
               />
             </>
           ) : null}
+        </VStack>
 
-          <Spacer size={space.xl} />
-          <Button
-            label={mode === 'sign-in' ? 'Sign in' : 'Create account'}
-            tone="primary"
-            onPress={() => { void submit(); }}
-            disabled={!canSubmit}
-            busy={busy}
-          />
-          <Spacer size={space.sm} />
-          <Button
-            label={mode === 'sign-in' ? 'Start a new practice' : 'I already have an account'}
-            tone="quiet"
-            onPress={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setError(null); }}
-          />
+        <Spacer size={space.xl} />
+        <Button
+          label={mode === 'sign-in' ? 'Sign In' : 'Create Account'}
+          variant="filled"
+          full
+          onPress={() => { void submit(); }}
+          disabled={!canSubmit}
+          busy={busy}
+        />
+        <Spacer size={space.sm} />
+        <Button
+          label={mode === 'sign-in' ? 'Start a New Practice' : 'I Already Have an Account'}
+          variant="plain"
+          full
+          onPress={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setError(null); }}
+        />
 
-          <Spacer size={space.xl} />
-          <View style={{ alignItems: 'center' }}>
-            <Caption>Signing in needs a connection. Everything after it does not.</Caption>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </Screen>
+        <T variant="footnote" tone="label2" align="center" style={{ marginTop: space.xl }}>
+          Signing in needs a connection. Everything after it works offline.
+        </T>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

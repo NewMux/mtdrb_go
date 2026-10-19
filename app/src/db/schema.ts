@@ -189,4 +189,45 @@ export const MIGRATIONS: string[] = [
      key TEXT PRIMARY KEY NOT NULL,
      value TEXT NOT NULL
    )`,
+
+  /**
+   * v2: a programme's blocks, days and prescriptions, as one JSON document.
+   *
+   * The server sends the structure as an aggregate on the programme row
+   * rather than as three more collections: a block edited in isolation is not
+   * a thing a trainer does, and the builder saves the whole programme at once.
+   */
+  `ALTER TABLE programs ADD COLUMN structure TEXT`,
+  `CREATE INDEX IF NOT EXISTS assignments_client_idx ON program_assignments (client_id, status)`,
+  `CREATE INDEX IF NOT EXISTS attendees_client_idx ON session_attendees (client_id)`,
 ];
+
+/**
+ * Applies the schema.
+ *
+ * Every statement runs on every launch, so each must be idempotent. SQLite has
+ * no `ADD COLUMN IF NOT EXISTS`, so a column addition that has already
+ * happened is recognised by its error and skipped; anything else still throws.
+ */
+export function applyMigrations(run: (sql: string) => void): void {
+  for (const statement of MIGRATIONS) {
+    try {
+      run(statement);
+    } catch (cause) {
+      if (/ADD COLUMN/i.test(statement) && /duplicate column/i.test(String(cause))) continue;
+      throw cause;
+    }
+  }
+}
+
+/** The same, for a driver whose exec is asynchronous. */
+export async function applyMigrationsAsync(run: (sql: string) => Promise<unknown>): Promise<void> {
+  for (const statement of MIGRATIONS) {
+    try {
+      await run(statement);
+    } catch (cause) {
+      if (/ADD COLUMN/i.test(statement) && /duplicate column/i.test(String(cause))) continue;
+      throw cause;
+    }
+  }
+}

@@ -1,20 +1,22 @@
 import React from 'react';
-import { Link } from 'expo-router';
 import { View } from 'react-native';
+import { useRouter } from 'expo-router';
 
-import { Body, Screen, Spacer, Title } from '@/ui/components';
-import { colors, space } from '@/ui/theme';
+import { EmptyState } from '@/ui/components';
+import { useTheme } from '@/ui/theme';
 
 export default function NotFound() {
+  const router = useRouter();
+  const { c } = useTheme();
   return (
-    <Screen>
-      <View style={{ padding: space.xl }}>
-        <Title>Nothing here</Title>
-        <Spacer size={space.sm} />
-        <Body muted>That screen does not exist.</Body>
-        <Spacer />
-        <Link href="/" style={{ color: colors.accent, fontSize: 16 }}>Back to today</Link>
-      </View>
-    </Screen>
+    <View style={{ flex: 1, backgroundColor: c.bg, justifyContent: 'center' }}>
+      <EmptyState
+        icon="info"
+        title="Nothing here"
+        message="That screen does not exist."
+        action="Back to Today"
+        onAction={() => router.replace('/')}
+      />
+    </View>
   );
 }

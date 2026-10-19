@@ -20,7 +20,7 @@ import { previousSets } from './queries';
 import { newId } from '@/lib/id';
 
 /** Queues an operation and applies its local effect in one transaction. */
-async function act(
+export async function act(
   db: Database,
   type: OperationType,
   data: Record<string, unknown> | ((id: string) => Record<string, unknown>),
@@ -71,7 +71,10 @@ export async function markAttendance(
 export async function startWorkout(
   db: Database,
   clientId: string,
-  opts: { dayId?: string; sessionId?: string; weekNumber?: number; performedOn?: Date } = {},
+  opts: {
+    dayId?: string; sessionId?: string; weekNumber?: number; performedOn?: Date;
+    assignmentId?: string;
+  } = {},
 ): Promise<string> {
   const performedOn = (opts.performedOn ?? new Date()).toISOString().slice(0, 10);
 
@@ -84,6 +87,7 @@ export async function startWorkout(
       // references a workout the server has never heard of.
       id,
       client_id: clientId,
+      assignment_id: opts.assignmentId ?? null,
       day_id: opts.dayId ?? null,
       session_id: opts.sessionId ?? null,
       week_number: opts.weekNumber ?? 1,
@@ -94,11 +98,12 @@ export async function startWorkout(
       // reference it before the server has ever heard of it.
       await db.execute(
         `INSERT INTO workout_sessions
-           (id, client_id, day_id, session_id, week_number, performed_on, status, notes)
-         VALUES (?, ?, ?, ?, ?, ?, 'in_progress', '')`,
+           (id, client_id, assignment_id, day_id, session_id, week_number, performed_on, status, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', '')`,
         [
           id,
           clientId,
+          opts.assignmentId ?? null,
           opts.dayId ?? null,
           opts.sessionId ?? null,
           opts.weekNumber ?? 1,
@@ -119,6 +124,8 @@ export interface SetInput {
   isWarmup?: boolean;
   completed?: boolean;
   notes?: string;
+  /** The prescription this set fulfils, when the workout follows a programme. */
+  programExerciseId?: string | null;
 }
 
 /**
@@ -153,6 +160,7 @@ export async function logSet(
       id: existing?.id ?? id,
       workout_id: workoutId,
       exercise_id: exerciseId,
+      program_exercise_id: input.programExerciseId ?? null,
       set_index: setIndex,
       reps: input.reps ?? null,
       load_grams: input.loadGrams ?? null,
@@ -170,8 +178,9 @@ export async function logSet(
       await db.execute(
         `INSERT INTO set_logs
            (id, workout_session_id, exercise_id, set_index, reps, load_grams,
-            rpe_tenths, rir, rest_seconds, tempo, is_warmup, completed, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rpe_tenths, rir, rest_seconds, tempo, is_warmup, completed, notes,
+            program_exercise_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            reps = excluded.reps, load_grams = excluded.load_grams,
            rpe_tenths = excluded.rpe_tenths, rir = excluded.rir,
@@ -183,7 +192,7 @@ export async function logSet(
           input.reps ?? null, input.loadGrams ?? null,
           input.rpeTenths ?? null, input.rir ?? null, input.restSeconds ?? null,
           input.tempo ?? '', input.isWarmup ? 1 : 0, completed ? 1 : 0,
-          input.notes ?? '',
+          input.notes ?? '', input.programExerciseId ?? null,
         ],
       );
     },
@@ -340,4 +349,32 @@ export async function cloneLastSession(
     });
   }
   return previous.length;
+}
+
+/**
+ * Updates a client's name or notes.
+ *
+ * Profile edits are last-write-wins on the server (ADR 0004): losing a
+ * redundant note is acceptable, blocking the trainer is not.
+ */
+export async function updateClient(
+  db: Database,
+  clientId: string,
+  patch: { fullName?: string; notes?: string },
+): Promise<string> {
+  return act(
+    db,
+    'client.update',
+    { client_id: clientId, full_name: patch.fullName ?? null, notes: patch.notes ?? null },
+    async () => {
+      if (patch.fullName !== undefined) {
+        await db.execute(`UPDATE clients SET full_name = ?, updated_at = ? WHERE id = ?`,
+          [patch.fullName, new Date().toISOString(), clientId]);
+      }
+      if (patch.notes !== undefined) {
+        await db.execute(`UPDATE clients SET notes = ?, updated_at = ? WHERE id = ?`,
+          [patch.notes, new Date().toISOString(), clientId]);
+      }
+    },
+  );
 }

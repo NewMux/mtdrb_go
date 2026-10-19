@@ -10,7 +10,7 @@
  */
 
 import React, { useState } from 'react';
-import { ScrollView, Share, View } from 'react-native';
+import { Share, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { ApiError, NetworkError } from '@/api/client';
@@ -18,8 +18,7 @@ import type { Invoice, ShareLink } from '@/api/types';
 import { sellPackage } from '@/features/billing';
 import { useApp } from '@/state/app';
 import {
-  Banner, Body, Button, Caption, Card, Field, Heading, Metric,
-  NumberField, Row, Screen, Spacer, Title,
+  Avatar, Banner, Body, Button, Card, FieldRow, HStack, IconBubble, Section, Segmented, T, VStack,
 } from '@/ui/components';
 import { money, parseMoney, parseReps } from '@/ui/format';
 import { space } from '@/ui/theme';
@@ -76,103 +75,95 @@ export default function SellPackageScreen() {
 
   if (issued) {
     return (
-      <Screen>
-        <ScrollView contentContainerStyle={{ padding: space.lg }}>
-          <Title>Issued</Title>
-          <Spacer size={space.xs} />
-          <Body muted>
-            {issued.invoice.number
-              ? `Invoice ${issued.invoice.number}.`
-              : 'Invoice issued.'}{' '}
-            The credits are on {name ?? 'the client'}&apos;s account and the money is booked as owed,
-            not yet earned.
-          </Body>
+      <Body>
+        <VStack align="center" gap={space.sm} style={{ paddingHorizontal: space.xl, paddingTop: space.lg }}>
+          <IconBubble icon="checkCircle" hue="green" size={72} />
+          <T variant="title2" align="center">Invoice Issued</T>
+          <T variant="subhead" tone="label2" align="center">
+            {issued.invoice.number ? `${issued.invoice.number} · ` : ''}The sessions are on {name ?? 'the client'}&apos;s account. The money is booked as owed — it&apos;s earned as each session is delivered.
+          </T>
+        </VStack>
 
-          <Spacer size={space.lg} />
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.xl }}>
           <Card>
-            <Metric
-              value={money(issued.invoice.total_minor, issued.invoice.currency || currency)}
-              label="to collect"
-            />
+            <T variant="footnote" tone="label2" weight="600">TO COLLECT</T>
+            <T variant="metric">{money(issued.invoice.total_minor, issued.invoice.currency || currency)}</T>
           </Card>
+        </View>
 
-          <Spacer size={space.lg} />
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.xl, gap: space.sm }}>
           {issued.share ? (
             <>
-              <Button label="Send the link" tone="primary" onPress={() => { void shareLink(); }} />
-              <Spacer size={space.sm} />
-              <Caption>
-                The link shows the invoice and your payment instructions. Anyone holding it can
-                view it, so send it to the client and nobody else.
-              </Caption>
+              <Button label="Send the Link" icon="share" variant="filled" full onPress={() => { void shareLink(); }} />
+              <T variant="footnote" tone="label2" align="center">
+                The link shows the invoice and your payment details. Anyone holding it can view it, so send it to the client only.
+              </T>
             </>
           ) : (
-            <Banner
-              message="The invoice is issued, but the share link could not be minted. You can create one from the invoice later."
-              tone="muted"
-            />
+            <Banner tone="gray" message="The invoice is issued, but the share link could not be created. You can make one from the invoice later." />
           )}
-
-          <Spacer size={space.xl} />
-          <Button label="Done" onPress={() => router.back()} />
-        </ScrollView>
-      </Screen>
+          <Button label="Done" variant="gray" full onPress={() => router.back()} />
+        </View>
+      </Body>
     );
   }
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={{ padding: space.lg }} keyboardShouldPersistTaps="handled">
-        <Title>Sell a package</Title>
-        <Caption>{name ?? 'Client'}</Caption>
-
-        <Spacer size={space.lg} />
+    <Body keyboard>
+      <View style={{ paddingHorizontal: space.lg, gap: space.md }}>
+        <HStack gap={space.md}>
+          <Avatar name={name ?? 'Client'} size={44} />
+          <VStack gap={0}>
+            <T variant="headline">{name ?? 'Client'}</T>
+            <T variant="footnote" tone="label2">New package</T>
+          </VStack>
+        </HStack>
         {sync.offline ? (
-          <>
-            <Banner
-              message="No connection. Invoice numbers have to be gap-free, so they are issued by the server — this one has to wait for signal."
-              tone="warning"
-            />
-            <Spacer />
-          </>
+          <Banner tone="orange" icon="offline" message="No connection. Invoice numbers must be gap-free, so the server issues them — this one has to wait for signal." />
         ) : null}
-        {error ? (
-          <>
-            <Banner message={error} tone="danger" />
-            <Spacer />
-          </>
-        ) : null}
+        {error ? <Banner tone="red" message={error} /> : null}
+      </View>
 
-        <Field label="Description" value={description} onChangeText={setDescription} />
-        <Spacer />
-        <Row>
-          <NumberField label="Sessions" value={credits} onChangeText={setCredits} placeholder="10" />
-          <NumberField label={`Price each (${currency})`} value={price} onChangeText={setPrice} placeholder="50.00" />
-        </Row>
+      <Section title="Pack Size" plain>
+        <Segmented
+          options={PRESETS.map((p) => ({ value: String(p), label: `${p} sessions` }))}
+          value={PRESETS.includes(Number(credits)) ? credits : '__custom'}
+          onChange={(v) => { setCredits(v); setDescription(`${v}-session personal training package`); }}
+        />
+      </Section>
 
-        <Spacer size={space.lg} />
+      <Section>
+        <FieldRow first label="Description" value={description} onChangeText={setDescription} />
+        <FieldRow label="Sessions" value={credits} onChangeText={setCredits} keyboardType="number-pad" />
+        <FieldRow label="Price each" value={price} onChangeText={setPrice} keyboardType="decimal-pad" suffix={currency} />
+      </Section>
+
+      <View style={{ paddingHorizontal: space.lg, marginTop: space.xl }}>
         <Card>
-          <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
-            <View>
-              <Heading>Total</Heading>
-              <Caption>Credited to Deferred Revenue — earned one session at a time.</Caption>
-            </View>
-            <Body>{total === null ? '—' : money(total, currency)}</Body>
-          </Row>
+          <HStack justify="space-between" align="flex-end">
+            <VStack gap={2} style={{ flex: 1 }}>
+              <T variant="headline">Total</T>
+              <T variant="footnote" tone="label2">Held as prepaid until each session is delivered.</T>
+            </VStack>
+            <T variant="metricSmall">{total === null ? '—' : money(total, currency)}</T>
+          </HStack>
         </Card>
-
-        <Spacer size={space.xl} />
+        <View style={{ height: space.lg }} />
         <Button
-          label="Issue invoice"
-          tone="primary"
+          label="Issue Invoice"
+          icon="invoice"
+          variant="filled"
+          full
           onPress={() => { void issue(); }}
           disabled={total === null || creditCount === null || creditCount < 1 || description.trim() === ''}
           busy={busy}
         />
-      </ScrollView>
-    </Screen>
+      </View>
+    </Body>
   );
 }
+
+const PRESETS = [5, 10, 20];
 
 function describe(cause: unknown): string {
   if (cause instanceof NetworkError) {

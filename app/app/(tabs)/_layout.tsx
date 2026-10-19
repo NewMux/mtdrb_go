@@ -1,103 +1,122 @@
 /**
- * The four places a trainer goes, and the one thing they create.
+ * The five places a trainer goes.
  *
- * Today is first because it is the answer to the only question asked while
- * standing on a gym floor: who is in front of me, and what happens next.
+ * Today is first because it answers the only question asked on a gym floor:
+ * who is in front of me, and what happens next. Then the week, the people,
+ * the training, and the business.
  *
- * The lime circle is the single create action. A trainer signs someone up
- * standing next to them, often mid-conversation, and that is the one thing
- * worth reaching for without first navigating somewhere.
+ * On iOS this is the system tab bar — on iOS 26 and later, the floating
+ * Liquid Glass capsule that minimises as content scrolls. Elsewhere a
+ * JavaScript tab bar draws the same shape, so the web demo and Android build
+ * look like the same product.
  *
- * It floats *above* the bar rather than straddling it. The straddle is the
- * nicer shape, but it only works with an even number of tabs — with three
- * destinations the circle lands on top of the middle one and eats its taps.
- * A button that covers a destination is worse than a button sitting slightly
- * higher.
+ * Creating things lives behind the + in each tab's header rather than a
+ * floating button: a button over the tab bar fights the glass capsule for the
+ * same space.
  */
 
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Tabs, useRouter } from 'expo-router';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Tabs } from 'expo-router';
+import { NativeTabs, Icon as NativeIcon, Label } from 'expo-router/unstable-native-tabs';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, FAB_SIZE, radius, space, type as typography } from '@/ui/theme';
+import { Glass } from '@/ui/glass';
+import { Icon, type IconName } from '@/ui/icon';
+import { tap } from '@/ui/components';
+import { radius, type as typography, useTheme } from '@/ui/theme';
 
-function AddClientButton() {
-  const router = useRouter();
+const TABS: { name: string; title: string; icon: IconName; sf: { default: string; selected: string } }[] = [
+  { name: 'index', title: 'Today', icon: 'today', sf: { default: 'sun.max', selected: 'sun.max.fill' } },
+  { name: 'calendar', title: 'Calendar', icon: 'calendar', sf: { default: 'calendar', selected: 'calendar' } },
+  { name: 'clients', title: 'Clients', icon: 'clients', sf: { default: 'person.2', selected: 'person.2.fill' } },
+  { name: 'programs', title: 'Programs', icon: 'programs', sf: { default: 'dumbbell', selected: 'dumbbell.fill' } },
+  { name: 'business', title: 'Business', icon: 'business', sf: { default: 'chart.bar', selected: 'chart.bar.fill' } },
+];
+
+export default function TabsLayout() {
+  const { c } = useTheme();
+
+  if (Platform.OS === 'ios') {
+    return (
+      <NativeTabs tintColor={c.tint} minimizeBehavior="onScrollDown">
+        {TABS.map((t) => (
+          <NativeTabs.Trigger key={t.name} name={t.name}>
+            {/* The names are checked against the SF Symbols set by expo-symbols' types. */}
+            <NativeIcon sf={t.sf as never} />
+            <Label>{t.title}</Label>
+          </NativeTabs.Trigger>
+        ))}
+      </NativeTabs>
+    );
+  }
+
   return (
-    <View pointerEvents="box-none" style={styles.fabWrap}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Add client"
-        onPress={() => router.push('/client/new')}
-        style={({ pressed }) => [styles.fab, pressed && { opacity: 0.8 }]}
-      >
-        <Text style={styles.fabGlyph}>+</Text>
-      </Pressable>
+    <Tabs
+      tabBar={(props) => <GlassTabBar {...props} />}
+      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: c.bg } }}
+    >
+      {TABS.map((t) => <Tabs.Screen key={t.name} name={t.name} options={{ title: t.title }} />)}
+    </Tabs>
+  );
+}
+
+/**
+ * The floating capsule, drawn by hand.
+ *
+ * The selected tab sits in a soft lozenge rather than merely changing colour,
+ * which is how the iOS 26 bar shows where you are without relying on hue.
+ */
+function GlassTabBar({ state, navigation }: BottomTabBarProps) {
+  const { c } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View pointerEvents="box-none" style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      <Glass style={styles.bar} intensity={70}>
+        {state.routes.map((route, index) => {
+          const tab = TABS.find((t) => t.name === route.name);
+          if (!tab) return null;
+          const focused = state.index === index;
+          const color = focused ? c.tint : c.label;
+          return (
+            <Pressable
+              key={route.key}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: focused }}
+              accessibilityLabel={tab.title}
+              onPress={() => {
+                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                if (!focused && !event.defaultPrevented) {
+                  tap('select');
+                  navigation.navigate(route.name, route.params);
+                }
+              }}
+              style={styles.item}
+            >
+              <View style={[styles.lozenge, focused && { backgroundColor: c.fill2 }]}>
+                <Icon name={tab.icon} size={22} color={color} />
+                <Text style={[typography.caption2, styles.label, { color, fontWeight: focused ? '700' : '500' }]} numberOfLines={1}>
+                  {tab.title}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </Glass>
     </View>
   );
 }
 
-export default function TabsLayout() {
-  return (
-    <>
-      <Tabs
-        screenOptions={{
-          headerShown: false,
-          sceneStyle: { backgroundColor: colors.bg },
-          tabBarStyle: {
-            backgroundColor: colors.surface,
-            borderTopWidth: 0,
-            height: 78,
-            paddingBottom: space.lg,
-            paddingTop: space.md,
-          },
-          tabBarActiveTintColor: colors.accent,
-          tabBarInactiveTintColor: colors.inkMuted,
-          tabBarLabelStyle: { ...typography.caption },
-          // No icon set is bundled, and a label a trainer can read in a dim
-          // gym beats a glyph they have to decode.
-          tabBarIconStyle: { display: 'none' },
-        }}
-      >
-        <Tabs.Screen name="index" options={{ title: 'Today' }} />
-        <Tabs.Screen name="dashboard" options={{ title: 'Practice' }} />
-        <Tabs.Screen name="clients" options={{ title: 'Clients' }} />
-        <Tabs.Screen name="money" options={{ title: 'Money' }} />
-      </Tabs>
-      <AddClientButton />
-    </>
-  );
-}
-
 const styles = StyleSheet.create({
-  // Anchored to the bar rather than placed in it: a tab bar item cannot break
-  // out of its own bounds, and the overhang is the whole point of the shape.
-  fabWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    // Clear of the 78pt bar, so every tab keeps its full target.
-    bottom: 94,
-    alignItems: 'center',
+  wrap: { position: 'absolute', left: 0, right: 0, bottom: 0, alignItems: 'center', paddingHorizontal: 16 },
+  bar: {
+    flexDirection: 'row', width: '100%', maxWidth: 520, height: 64, borderRadius: radius.pill,
+    paddingHorizontal: 6, alignItems: 'center',
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20, shadowOffset: { width: 0, height: 8 },
   },
-  fab: {
-    width: FAB_SIZE,
-    height: FAB_SIZE,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // Lifted off the page rather than outlined against it.
-    shadowColor: '#000',
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-  },
-  fabGlyph: {
-    fontSize: 30,
-    lineHeight: 34,
-    fontWeight: '600',
-    color: colors.onAccent,
-  },
+  item: { flex: 1, height: '100%', alignItems: 'center', justifyContent: 'center' },
+  lozenge: { alignItems: 'center', justifyContent: 'center', height: 52, minWidth: 64, borderRadius: 26, paddingHorizontal: 8, gap: 2 },
+  label: { marginTop: 1 },
 });

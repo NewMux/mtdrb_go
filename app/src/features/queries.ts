@@ -321,3 +321,94 @@ export async function searchExercises(db: Database, search = '', limit = 50) {
     [term, term, term, limit],
   );
 }
+
+export interface RosterClient extends ClientSummary {
+  programName: string | null;
+  lastTrained: string | null;
+  nextSession: string | null;
+}
+
+/**
+ * The roster with what a trainer scans for: who is on what programme, when
+ * they last trained, when they are next in.
+ */
+export async function rosterOverview(db: Database, search = ''): Promise<RosterClient[]> {
+  const term = search.trim();
+  const now = new Date().toISOString();
+  return db.select<RosterClient>(
+    `SELECT c.id, c.full_name AS fullName, c.status, c.email, c.phone,
+            coalesce((SELECT sum(p.credits_remaining) FROM packages p
+                       WHERE p.client_id = c.id AND p.status IN ('active','exhausted')), 0) AS creditsRemaining,
+            (SELECT pr.name FROM program_assignments a JOIN programs pr ON pr.id = a.program_id
+              WHERE a.client_id = c.id AND a.status = 'active' LIMIT 1) AS programName,
+            (SELECT max(w.performed_on) FROM workout_sessions w
+              WHERE w.client_id = c.id AND w.deleted_at IS NULL AND w.status = 'completed') AS lastTrained,
+            (SELECT min(s.starts_at) FROM session_attendees sa JOIN sessions s ON s.id = sa.session_id
+              WHERE sa.client_id = c.id AND s.starts_at >= ? AND coalesce(s.status,'') != 'cancelled') AS nextSession
+       FROM clients c
+      WHERE c.deleted_at IS NULL
+        AND (? = '' OR c.full_name LIKE '%' || ? || '%'
+             OR coalesce(c.email,'') LIKE '%' || ? || '%'
+             OR coalesce(c.phone,'') LIKE '%' || ? || '%')
+      ORDER BY c.full_name`,
+    [now, term, term, term, term],
+  );
+}
+
+export interface PackageRow {
+  id: string;
+  name: string;
+  creditsTotal: number;
+  creditsRemaining: number;
+  unitPriceMinor: number;
+  currency: string;
+  purchasedOn: string | null;
+  expiresAt: string | null;
+  status: string;
+}
+
+/** A client's packs, current first. */
+export async function clientPackages(db: Database, clientId: string): Promise<PackageRow[]> {
+  return db.select<PackageRow>(
+    `SELECT id, coalesce(name, 'Package') AS name, coalesce(credits_total, 0) AS creditsTotal,
+            coalesce(credits_remaining, 0) AS creditsRemaining, coalesce(unit_price_minor, 0) AS unitPriceMinor,
+            coalesce(currency, '') AS currency, purchased_on AS purchasedOn, expires_at AS expiresAt,
+            coalesce(status, 'active') AS status
+       FROM packages WHERE client_id = ?
+      ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'exhausted' THEN 1 ELSE 2 END, purchased_on DESC`,
+    [clientId],
+  );
+}
+
+export interface ClientPayment {
+  id: string;
+  amountMinor: number;
+  currency: string;
+  instrument: string;
+  receivedOn: string;
+  invoiceNumber: string | null;
+}
+
+export async function clientPayments(db: Database, clientId: string, limit = 10): Promise<ClientPayment[]> {
+  return db.select<ClientPayment>(
+    `SELECT p.id, p.amount_minor AS amountMinor, coalesce(p.currency,'') AS currency,
+            coalesce(p.instrument,'') AS instrument, p.received_on AS receivedOn, i.number AS invoiceNumber
+       FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id
+      WHERE coalesce(p.client_id, i.client_id) = ? AND p.reversed_by IS NULL
+      ORDER BY p.received_on DESC LIMIT ?`,
+    [clientId, limit],
+  );
+}
+
+/** One invoice, for the payment sheet. */
+export async function invoiceById(db: Database, id: string): Promise<InvoiceSummary | null> {
+  return db.selectOne<InvoiceSummary>(
+    `SELECT i.id, i.number, c.full_name AS clientName, i.status, i.currency,
+            i.total_minor AS totalMinor,
+            coalesce((SELECT sum(p.amount_minor) FROM payments p WHERE p.invoice_id = i.id), 0) AS paidMinor,
+            i.due_date AS dueDate
+       FROM invoices i JOIN clients c ON c.id = i.client_id
+      WHERE i.id = ?`,
+    [id],
+  );
+}

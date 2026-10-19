@@ -52,7 +52,12 @@ export type OperationType =
   | 'payment.record'
   | 'client.create'
   | 'client.update'
-  | 'biometrics.record';
+  | 'biometrics.record'
+  | 'session.book'
+  | 'session.reschedule'
+  | 'session.cancel'
+  | 'program.save'
+  | 'program.assign';
 
 export interface PushOperation {
   id: string;

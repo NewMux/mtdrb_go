@@ -9,20 +9,22 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 
 import * as outbox from '@/sync/outbox';
 import type { OutboxEntry } from '@/sync/outbox';
 import { ErrorCode } from '@/api/types';
 import { DEMO, useApp } from '@/state/app';
 import {
-  Banner, Body, Button, Caption, Card, Empty, Heading, Row, Screen, Spacer, Title,
+  Banner, Body, Button, Card, EmptyState, HStack, IconBubble, Section, T, VStack,
 } from '@/ui/components';
+import { describe as describeSync } from '@/ui/sync-badge';
 import { space } from '@/ui/theme';
 
 export default function SyncScreen() {
-  const { db, sync, syncNow, signOut, touch, account } = useApp();
+  const { db, sync, syncNow, touch } = useApp();
   const [failed, setFailed] = useState<OutboxEntry[]>([]);
+  const status = describeSync(sync);
 
   const load = useCallback(async () => {
     if (!db) return;
@@ -33,9 +35,8 @@ export default function SyncScreen() {
 
   const retry = async (entry: OutboxEntry) => {
     if (!db) return;
-    // Re-queueing rather than flipping the status, so it goes back to the end
-    // of the line with a fresh queued_at and cannot jump ahead of work done
-    // since.
+    // Re-queued rather than flipped back to pending, so it goes to the end of
+    // the line with a fresh queued_at and cannot jump ahead of work done since.
     await outbox.enqueue(db, entry.id, entry.type, entry.data, new Date());
     await load();
     touch();
@@ -50,87 +51,61 @@ export default function SyncScreen() {
   };
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}>
-        <Title>Sync</Title>
-        <Caption>
-          {sync.lastSyncAt
-            ? `Last synced ${new Date(sync.lastSyncAt).toLocaleTimeString()}`
-            : 'Not synced on this device yet'}
-        </Caption>
-
-        <Spacer size={space.lg} />
-
-        {DEMO ? (
-          <>
-            <Banner
-              message={"This build has no server behind it. Everything you do is written to this device and queued \u2014 but nothing can be sent, so credits are not really burned, revenue is not recognised and invoices are not settled. That all happens in the ledger, behind an API."}
-              tone="warning"
-            />
-            <Spacer />
-          </>
-        ) : null}
-
+    <Body>
+      <View style={{ paddingHorizontal: space.lg }}>
         <Card>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <View>
-              <Body>{sync.pending} waiting to send</Body>
-              <Caption>
-                {sync.offline
-                  ? 'No connection. They are safe on this device.'
-                  : 'They send themselves in the background.'}
-              </Caption>
-            </View>
-          </Row>
-          <Spacer size={space.sm} />
-          <Button
-            label="Sync now"
-            tone="primary"
-            busy={sync.running}
-            onPress={() => { void syncNow(); }}
-          />
+          <HStack gap={space.md}>
+            <IconBubble icon={status.icon} hue={DEMO ? 'orange' : status.hue} size={48} />
+            <VStack gap={2} style={{ flex: 1 }}>
+              <T variant="headline">{DEMO ? 'Demo mode' : status.label}</T>
+              <T variant="subhead" tone="label2">
+                {sync.lastSyncAt ? `Last synced ${new Date(sync.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Not synced on this device yet'}
+              </T>
+            </VStack>
+          </HStack>
+          <View style={{ height: space.lg }} />
+          <HStack justify="space-between">
+            <VStack gap={0}>
+              <T variant="metricSmall">{sync.pending}</T>
+              <T variant="footnote" tone="label2">waiting to send</T>
+            </VStack>
+            <Button label="Sync Now" icon="sync" variant="filled" size="medium" busy={sync.running} onPress={() => { void syncNow(); }} />
+          </HStack>
         </Card>
+      </View>
 
-        {sync.error ? (
-          <>
-            <Spacer />
-            <Banner message={sync.error} tone="danger" />
-          </>
-        ) : null}
+      {DEMO ? (
+        <Banner
+          style={{ marginHorizontal: space.lg, marginTop: space.lg }}
+          tone="orange"
+          title="No server behind this build"
+          message="Everything you do is saved on this device and queued — but nothing can be sent, so credits are not burned, revenue is not recognised and invoices are not settled. That happens in the ledger, behind the API."
+        />
+      ) : null}
 
-        <Spacer size={space.lg} />
-        <Heading>Refused</Heading>
-        <Spacer size={space.sm} />
+      {sync.error ? (
+        <Banner style={{ marginHorizontal: space.lg, marginTop: space.lg }} tone="red" message={sync.error} />
+      ) : null}
 
+      <Section title="Refused" plain footer={failed.length ? 'The server said no to these. Nothing else is held up behind them.' : undefined}>
         {failed.length === 0 ? (
-          <Empty title="Nothing refused" detail="Everything the server has seen, it accepted." />
+          <Card><EmptyState icon="checkCircle" hue="green" title="Nothing refused" message="Everything the server has seen, it accepted." /></Card>
         ) : (
-          failed.map((entry) => (
-            <Card key={entry.id} style={{ marginBottom: space.sm }}>
-              <Body>{describeOperation(entry)}</Body>
-              <Spacer size={space.xs} />
-              <Caption tone="danger">
-                {entry.error_message ?? 'The server refused this.'}
-              </Caption>
-              <Spacer size={space.sm} />
-              <Row>
-                <Button label="Try again" style={{ flex: 1 }} onPress={() => { void retry(entry); }} />
-                <Button label="Discard" tone="danger" onPress={() => { void discard(entry); }} />
-              </Row>
-            </Card>
-          ))
+          <VStack gap={space.md}>
+            {failed.map((entry) => (
+              <Card key={entry.id}>
+                <T variant="headline">{describeOperation(entry)}</T>
+                <T variant="subhead" tone="red" style={{ marginTop: 4 }}>{entry.error_message ?? 'The server refused this.'}</T>
+                <HStack gap={space.sm} style={{ marginTop: space.md }}>
+                  <Button label="Try Again" variant="tinted" size="medium" style={{ flex: 1 }} full onPress={() => { void retry(entry); }} />
+                  <Button label="Discard" variant="destructive" size="medium" onPress={() => { void discard(entry); }} />
+                </HStack>
+              </Card>
+            ))}
+          </VStack>
         )}
-
-        <Spacer size={space.xxl} />
-        <Caption>{account?.email ?? ''}</Caption>
-        <Spacer size={space.sm} />
-        <Button label="Sign out" tone="quiet" onPress={() => { void signOut(); }} />
-        <Spacer size={space.xs} />
-        <Caption>
-          Signing out leaves anything still waiting on this device. It sends when you sign back in.
-        </Caption>
-      </ScrollView>
-    </Screen>
+      </Section>
+    </Body>
   );
 }
 
@@ -139,7 +114,7 @@ function describeOperation(entry: OutboxEntry): string {
   switch (entry.type) {
     case 'attendance.mark':
       return entry.error_code === ErrorCode.InsufficientCredits
-        ? 'Marking a session completed — the client had no credits left'
+        ? 'Marking a session attended — the client had no sessions left'
         : 'Marking a session';
     case 'workout.start': return 'Starting a workout';
     case 'workout.log_set': return 'Logging a set';
@@ -151,6 +126,11 @@ function describeOperation(entry: OutboxEntry): string {
     case 'client.create': return 'Adding a client';
     case 'client.update': return 'Updating a client';
     case 'biometrics.record': return 'Recording a measurement';
+    case 'session.book': return 'Booking a session — the slot may clash with another';
+    case 'session.reschedule': return 'Moving a session';
+    case 'session.cancel': return 'Cancelling a session';
+    case 'program.save': return `Saving the program "${String(entry.data.name ?? '')}"`;
+    case 'program.assign': return 'Assigning a program';
     default: return 'A change';
   }
 }

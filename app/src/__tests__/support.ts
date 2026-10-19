@@ -8,13 +8,13 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import type { Database, Row } from '@/db/types';
-import { MIGRATIONS } from '@/db/schema';
+import { applyMigrations } from '@/db/schema';
 
 export class MemoryDatabase implements Database {
   private readonly db = new DatabaseSync(':memory:');
 
   constructor() {
-    for (const statement of MIGRATIONS) this.db.exec(statement);
+    applyMigrations((sql) => this.db.exec(sql));
   }
 
   async execute(sql: string, params: unknown[] = []): Promise<void> {

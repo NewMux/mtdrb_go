@@ -37,6 +37,22 @@ const SYNC_INTERVAL_MS = 45_000;
 export const DEMO = process.env.EXPO_PUBLIC_DEMO === '1';
 
 const ACCOUNT_KEY = 'auth.account';
+const PREFS_KEY = 'ui.prefs';
+
+/**
+ * Device-local preferences.
+ *
+ * Kept on the device rather than the server: a trainer who wants dark mode on
+ * the gym tablet and light on their phone should get both.
+ */
+export interface Prefs {
+  theme: 'system' | 'light' | 'dark';
+  units: 'kg' | 'lb';
+  /** Default rest between working sets, in seconds. */
+  restSeconds: number;
+}
+
+export const DEFAULT_PREFS: Prefs = { theme: 'system', units: 'kg', restSeconds: 90 };
 const LAST_SYNC_KEY = 'sync.last_at';
 
 export interface SyncState {
@@ -76,6 +92,8 @@ interface AppContextValue {
   }) => Promise<void>;
   signOut: () => Promise<void>;
   syncNow: () => Promise<SyncReport | null>;
+  prefs: Prefs;
+  setPrefs: (patch: Partial<Prefs>) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -105,6 +123,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
   const [sync, setSync] = useState<SyncState>({
     running: false, offline: false, lastSyncAt: null, pending: 0, failed: 0, error: null,
   });
@@ -146,6 +165,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (cancelled) return;
+
+      const storedPrefs = await getMeta(database, PREFS_KEY);
+      if (storedPrefs) {
+        try {
+          setPrefsState({ ...DEFAULT_PREFS, ...(JSON.parse(storedPrefs) as Partial<Prefs>) });
+        } catch {
+          // A corrupt preference blob is not worth failing a launch over.
+        }
+      }
 
       if (DEMO) {
         await seedDemo(database);
@@ -260,9 +288,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   signedOut.current = () => { void persistAccount(null); };
 
+  const setPrefs = useCallback((patch: Partial<Prefs>) => {
+    setPrefsState((current) => {
+      const next = { ...current, ...patch };
+      if (db) void setMeta(db, PREFS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [db]);
+
   const value = useMemo<AppContextValue>(
-    () => ({ db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow }),
-    [db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow],
+    () => ({ db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow, prefs, setPrefs }),
+    [db, api, account, ready, fatal, sync, revision, touch, signIn, signUp, signOut, syncNow, prefs, setPrefs],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
