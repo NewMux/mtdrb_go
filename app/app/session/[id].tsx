@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { markAttendance } from '@/features/actions';
@@ -37,6 +37,7 @@ export default function SessionScreen() {
   const router = useRouter();
   const [moving, setMoving] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [overdraft, setOverdraft] = useState<{ name: string; go: () => void } | null>(null);
 
   const session = useQuery((d) => sessionById(d, id), [id]);
   const credits = useQuery((d) => listClients(d, ''), []);
@@ -71,15 +72,7 @@ export default function SessionScreen() {
       touch(); session.reload(); void syncNow();
     };
     if (status !== 'completed' || (balance.get(clientId) ?? 0) > 0) { await go(false); return; }
-    if (Platform.OS === 'web') {
-      // eslint-disable-next-line no-alert
-      if (window.confirm(`${name} has no sessions left. Record this one as an overdraft?`)) await go(true);
-      return;
-    }
-    Alert.alert('No sessions left', `${name} has used their pack. Record this session as an overdraft?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Record as Overdraft', onPress: () => { void go(true); } },
-    ]);
+    setOverdraft({ name, go: () => { void go(true); } });
   };
 
   const move = async () => {
@@ -178,6 +171,13 @@ export default function SessionScreen() {
         message="Everyone on it is taken off the schedule. No credits are used."
         onClose={() => setConfirmCancel(false)}
         actions={[{ label: 'Cancel Session', destructive: true, onPress: () => { void cancel(); } }]}
+      />
+      <ActionSheet
+        visible={!!overdraft}
+        title={overdraft ? `${overdraft.name} has no sessions left` : undefined}
+        message="Record this session as an overdraft to settle when they renew?"
+        onClose={() => setOverdraft(null)}
+        actions={overdraft ? [{ label: 'Record as Overdraft', icon: 'invoice', hue: 'orange', onPress: overdraft.go }] : []}
       />
     </Body>
   );

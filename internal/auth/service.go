@@ -31,6 +31,22 @@ type LibrarySeeder interface {
 	SeedLibrary(ctx context.Context, tx pgx.Tx, tenantID ids.ID) error
 }
 
+// LibrarySeeders runs several seeders in order, so signup can provision the
+// exercise library and the session types in one transaction without auth
+// knowing about either.
+type LibrarySeeders []LibrarySeeder
+
+// SeedLibrary runs each seeder, stopping at the first failure so the signup
+// transaction rolls back whole.
+func (all LibrarySeeders) SeedLibrary(ctx context.Context, tx pgx.Tx, tenantID ids.ID) error {
+	for _, seeder := range all {
+		if err := seeder.SeedLibrary(ctx, tx, tenantID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Service implements registration, login and token rotation.
 type Service struct {
 	pool    *db.Pool

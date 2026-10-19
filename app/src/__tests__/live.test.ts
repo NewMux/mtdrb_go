@@ -15,7 +15,11 @@ import { ApiClient } from '@/api/client';
 import type { Invoice } from '@/api/types';
 import { markAttendance, logSet, recordPayment, startWorkout, completeWorkout } from '@/features/actions';
 import { sellPackage } from '@/features/billing';
+import { TEMPLATES } from '@/features/library';
+import { assignProgram, copyTemplate, getProgram, nextSession, saveProgram } from '@/features/programs';
 import { clientDetail, outstandingInvoices, todaysRoster, workoutSets } from '@/features/queries';
+import { bookSession, sessionsBetween } from '@/features/scheduling';
+import { openOrStartWorkout } from '@/features/workflow';
 import { pull, synchronise } from '@/sync/engine';
 import * as outbox from '@/sync/outbox';
 import { MemoryDatabase, memoryTokens } from './support';
@@ -65,9 +69,10 @@ describeLive('against a live server', () => {
     });
     clientId = created.id;
 
-    const type = await api.post<{ id: string }>('/v1/sessions/session-types', {
-      name: '1-on-1', duration_minutes: 60, capacity: 1, credit_cost: 1,
-    });
+    // Signup seeds the session types the booking sheet offers.
+    const types = await api.get<{ session_types: { id: string; name: string }[] }>('/v1/sessions/session-types');
+    const type = types.session_types.find((t) => t.name === '1-on-1');
+    if (!type) throw new Error('signup did not seed a 1-on-1 session type');
 
     const startsAt = new Date();
     startsAt.setHours(9, 0, 0, 0);
@@ -192,6 +197,72 @@ describeLive('against a live server', () => {
     const settled = invoices.invoices.filter((i) => i.status === 'settled');
     // Receiving the money settled the invoice; it did not earn anything.
     expect(settled.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('books, plans and trains entirely offline, and the server keeps the device\'s ids', async () => {
+    await pull(db, api);
+    const type = await db.selectOne<{ id: string; duration: number }>(
+      `SELECT id, duration_minutes AS duration FROM session_types WHERE name = '1-on-1'`,
+    );
+    if (!type) throw new Error('the seeded session types did not reach the device');
+
+    // Tomorrow at 07:00, booked with no signal.
+    const startsAt = new Date();
+    startsAt.setDate(startsAt.getDate() + 1);
+    startsAt.setHours(7, 0, 0, 0);
+    const [sessionId] = await bookSession(db, {
+      sessionTypeId: type.id, startsAt, durationMinutes: type.duration, clientIds: [clientId], location: 'Park',
+    });
+
+    // A template copied into a programme, assigned, and its first day trained.
+    const { id: programId, skipped } = await copyTemplate(db, TEMPLATES.find((t) => t.key === 'strength-5x5')!);
+    expect(skipped).toEqual([]);
+    await assignProgram(db, programId, clientId);
+    const plan = await nextSession(db, clientId);
+    expect(plan?.day.name).toBe('Workout A');
+
+    const { id: workoutId } = await openOrStartWorkout(db, clientId, { sessionId });
+    const rx = plan!.day.prescriptions[0]!;
+    await logSet(db, workoutId, rx.exercise_id, 1, { reps: 5, loadGrams: 100_000, programExerciseId: rx.id });
+    await completeWorkout(db, workoutId);
+
+    const roster = await sessionsBetween(db, startsAt, new Date(startsAt.getTime() + 3600_000));
+    await markAttendance(db, roster[0]!.attendees[0]!.attendeeId, 'completed');
+
+    // And an edit to the programme after it was assigned, folded into the save.
+    const doc = await getProgram(db, programId);
+    await saveProgram(db, { ...doc!, name: 'Strength 5×5 — Dana' });
+
+    const queued = await outbox.pending(db);
+    expect(queued.map((q) => q.type)).toEqual([
+      'session.book', 'program.save', 'program.assign', 'workout.start',
+      'workout.log_set', 'workout.complete', 'attendance.mark',
+    ]);
+
+    const result = await api.push(queued.map((e) => ({ id: e.id, type: e.type, queued_at: e.queued_at, data: e.data })));
+    const refused = result.results.filter((r) => r.status !== 'applied');
+    if (refused.length > 0) {
+      throw new Error(refused.map((r) => `  ${r.type}: [${r.code}] ${r.message}`).join('\n'));
+    }
+    await outbox.markSent(db, queued.map((e) => e.id));
+
+    // A fresh device sees what this one built, under the same ids.
+    const other = new MemoryDatabase();
+    try {
+      await pull(other, api);
+      const theirs = await getProgram(other, programId);
+      expect(theirs?.name).toBe('Strength 5×5 — Dana');
+      expect(theirs?.blocks[0]?.days.map((d) => d.name)).toEqual(['Workout A', 'Workout B']);
+      expect(theirs?.blocks[0]?.days[0]?.prescriptions.map((p) => p.exercise_name)).toEqual(
+        plan!.day.prescriptions.map((p) => p.exercise_name),
+      );
+      expect((await nextSession(other, clientId))?.day.name).toBe('Workout B');
+      const booked = await sessionsBetween(other, startsAt, new Date(startsAt.getTime() + 3600_000));
+      expect(booked.map((b) => b.id)).toEqual([sessionId]);
+      expect(booked[0]?.attendees[0]?.status).toBe('completed');
+    } finally {
+      other.close();
+    }
   });
 
   it('keeps the books balanced through all of it', async () => {

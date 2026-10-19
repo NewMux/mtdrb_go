@@ -48,6 +48,19 @@ const (
 	OpCreateClient     OperationType = "client.create"
 	OpUpdateClient     OperationType = "client.update"
 	OpRecordBiometrics OperationType = "biometrics.record"
+
+	// The calendar. Booking carries the session and attendee ids the device
+	// minted, so a session booked offline can be marked offline. Each is a
+	// strict intent, not last-write-wins: the overlap constraint decides
+	// whether a slot is free, and a clash comes back as a conflict.
+	OpBookSession       OperationType = "session.book"
+	OpRescheduleSession OperationType = "session.reschedule"
+	OpCancelSession     OperationType = "session.cancel"
+
+	// Programming. A programme is saved whole and last-write-wins (ADR 0004):
+	// a plan is recoverable in a way money is not.
+	OpSaveProgram   OperationType = "program.save"
+	OpAssignProgram OperationType = "program.assign"
 )
 
 // Operation is one queued intent from a client's outbox.
@@ -339,6 +352,84 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, tenantID ids.ID, deps De
 		out, err := deps.CRM.RecordBiometrics(ctx, tx, tenantID, bio)
 		return encode(out, err)
 
+	case OpBookSession:
+		var in struct {
+			ID            *ids.ID   `json:"id"`
+			SessionTypeID ids.ID    `json:"session_type_id"`
+			StartsAt      time.Time `json:"starts_at"`
+			ClientIDs     []ids.ID  `json:"client_ids"`
+			AttendeeIDs   []ids.ID  `json:"attendee_ids"`
+			Location      string    `json:"location"`
+			Notes         string    `json:"notes"`
+		}
+		if err := decode(op, &in); err != nil {
+			return nil, err
+		}
+		out, err := deps.Scheduling.Book(ctx, tx, tenantID, scheduling.BookInput{
+			ID: in.ID, AttendeeIDs: in.AttendeeIDs, SessionTypeID: in.SessionTypeID,
+			StartsAt: in.StartsAt, ClientIDs: in.ClientIDs, Location: in.Location, Notes: in.Notes,
+		})
+		return encode(out, err)
+
+	case OpRescheduleSession:
+		var in struct {
+			SessionID ids.ID    `json:"session_id"`
+			StartsAt  time.Time `json:"starts_at"`
+		}
+		if err := decode(op, &in); err != nil {
+			return nil, err
+		}
+		out, err := deps.Scheduling.Reschedule(ctx, tx, tenantID, in.SessionID, in.StartsAt)
+		return encode(out, err)
+
+	case OpCancelSession:
+		var in struct {
+			SessionID ids.ID `json:"session_id"`
+		}
+		if err := decode(op, &in); err != nil {
+			return nil, err
+		}
+		if err := deps.Scheduling.Cancel(ctx, tx, in.SessionID); err != nil {
+			// Already cancelled is what the trainer wanted; a replay of the
+			// same cancel must not come back as a refusal.
+			if errs.KindOf(err) == errs.KindNotFound {
+				if current, getErr := deps.Scheduling.Get(ctx, tx, in.SessionID); getErr == nil && current.Status == scheduling.StatusCancelled {
+					return encode(current, nil)
+				}
+			}
+			return nil, err
+		}
+		out, err := deps.Scheduling.Get(ctx, tx, in.SessionID)
+		return encode(out, err)
+
+	case OpSaveProgram:
+		var in programPayload
+		if err := decode(op, &in); err != nil {
+			return nil, err
+		}
+		out, err := deps.Programming.SaveProgram(ctx, tx, tenantID, in.toInput())
+		return encode(out, err)
+
+	case OpAssignProgram:
+		var in struct {
+			ID        *ids.ID     `json:"id"`
+			ProgramID ids.ID      `json:"program_id"`
+			ClientID  ids.ID      `json:"client_id"`
+			StartsOn  *dates.Date `json:"starts_on"`
+			EndsOn    *dates.Date `json:"ends_on"`
+			Notes     string      `json:"notes"`
+		}
+		if err := decode(op, &in); err != nil {
+			return nil, err
+		}
+		assign := programming.AssignInput{
+			ID: in.ID, ProgramID: in.ProgramID, ClientID: in.ClientID,
+			EndsOn: in.EndsOn.TimePtr(), Notes: in.Notes,
+		}
+		assign.StartsOn = in.StartsOn.OrElse(time.Time{})
+		out, err := deps.Programming.Assign(ctx, tx, tenantID, assign)
+		return encode(out, err)
+
 	default:
 		return nil, errs.Invalid(errs.CodeValidation,
 			"unknown sync operation %q", op.Type).
@@ -389,4 +480,76 @@ func stableSortByQueuedAt(ops []Operation) {
 			ops[j], ops[j-1] = ops[j-1], ops[j]
 		}
 	}
+}
+
+// programPayload is a programme document as the device sends it — the same
+// shape as the programme JSON the server returns, so what the builder writes
+// and what a pull brings back are one format.
+type programPayload struct {
+	ID          ids.ID `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	IsTemplate  bool   `json:"is_template"`
+	Archived    bool   `json:"archived"`
+	Blocks      []struct {
+		ID        ids.ID `json:"id"`
+		Name      string `json:"name"`
+		Weeks     int    `json:"weeks"`
+		SortOrder int    `json:"sort_order"`
+		Notes     string `json:"notes"`
+		Days      []struct {
+			ID            ids.ID `json:"id"`
+			Name          string `json:"name"`
+			SortOrder     int    `json:"sort_order"`
+			Notes         string `json:"notes"`
+			Prescriptions []struct {
+				ID              ids.ID `json:"id"`
+				ExerciseID      ids.ID `json:"exercise_id"`
+				SortOrder       int    `json:"sort_order"`
+				TargetSets      int    `json:"target_sets"`
+				TargetRepsMin   *int   `json:"target_reps_min"`
+				TargetRepsMax   *int   `json:"target_reps_max"`
+				TargetLoadGrams *int   `json:"target_load_grams"`
+				TargetRPETenths *int   `json:"target_rpe_tenths"`
+				TargetRIR       *int   `json:"target_rir"`
+				RestSeconds     *int   `json:"rest_seconds"`
+				Tempo           string `json:"tempo"`
+				SupersetGroup   string `json:"superset_group"`
+				Notes           string `json:"notes"`
+			} `json:"prescriptions"`
+		} `json:"days"`
+	} `json:"blocks"`
+}
+
+func (p programPayload) toInput() programming.SaveProgramInput {
+	in := programming.SaveProgramInput{
+		ID: p.ID, Name: p.Name, Description: p.Description,
+		IsTemplate: p.IsTemplate, Archived: p.Archived,
+		Blocks: make([]programming.SaveBlockInput, 0, len(p.Blocks)),
+	}
+	for _, b := range p.Blocks {
+		block := programming.SaveBlockInput{
+			ID: b.ID, Name: b.Name, Weeks: b.Weeks, SortOrder: b.SortOrder, Notes: b.Notes,
+			Days: make([]programming.SaveDayInput, 0, len(b.Days)),
+		}
+		for _, d := range b.Days {
+			day := programming.SaveDayInput{
+				ID: d.ID, Name: d.Name, SortOrder: d.SortOrder, Notes: d.Notes,
+				Prescriptions: make([]programming.SavePrescriptionInput, 0, len(d.Prescriptions)),
+			}
+			for _, rx := range d.Prescriptions {
+				day.Prescriptions = append(day.Prescriptions, programming.SavePrescriptionInput{
+					ID: rx.ID, ExerciseID: rx.ExerciseID, SortOrder: rx.SortOrder,
+					TargetSets: rx.TargetSets, TargetRepsMin: rx.TargetRepsMin,
+					TargetRepsMax: rx.TargetRepsMax, TargetLoadGrams: rx.TargetLoadGrams,
+					TargetRPETenths: rx.TargetRPETenths, TargetRIR: rx.TargetRIR,
+					RestSeconds: rx.RestSeconds, Tempo: rx.Tempo,
+					SupersetGroup: rx.SupersetGroup, Notes: rx.Notes,
+				})
+			}
+			block.Days = append(block.Days, day)
+		}
+		in.Blocks = append(in.Blocks, block)
+	}
+	return in
 }

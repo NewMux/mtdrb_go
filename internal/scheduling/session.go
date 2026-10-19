@@ -12,6 +12,7 @@ package scheduling
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -150,6 +151,12 @@ func (s *Service) ListSessionTypes(ctx context.Context, tx pgx.Tx) ([]SessionTyp
 
 // BookInput describes a session to schedule.
 type BookInput struct {
+	// ID is the session id the device minted offline, when there is one, and
+	// AttendeeIDs the attendee ids in the same order as ClientIDs. Honouring
+	// both is what lets a session booked with no signal be marked attended
+	// with no signal, and both operations reach the server naming the same rows.
+	ID            *ids.ID
+	AttendeeIDs   []ids.ID
 	SessionTypeID ids.ID
 	StartsAt      time.Time
 	ClientIDs     []ids.ID
@@ -179,6 +186,11 @@ func (s *Service) Book(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in BookI
 		}
 		return Session{}, errs.Internal(err, "load session type")
 	}
+	if len(in.AttendeeIDs) > 0 && len(in.AttendeeIDs) != len(in.ClientIDs) {
+		return Session{}, errs.Invalid(errs.CodeValidation,
+			"%d attendee ids were given for %d clients", len(in.AttendeeIDs), len(in.ClientIDs)).
+			WithField("attendee_ids", "must match client_ids one for one")
+	}
 	if len(in.ClientIDs) > capacity {
 		return Session{}, errs.Invalid(errs.CodeValidation,
 			"this session type seats %d, but %d clients were given", capacity, len(in.ClientIDs)).
@@ -199,19 +211,31 @@ func (s *Service) Book(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in BookI
 	blockedUntil := endsAt.Add(time.Duration(bufferMinutes) * time.Minute)
 
 	session := Session{
-		ID: ids.New(), SessionTypeID: in.SessionTypeID, StartsAt: startsAt, EndsAt: endsAt,
+		ID: db.ResolveID(in.ID), SessionTypeID: in.SessionTypeID, StartsAt: startsAt, EndsAt: endsAt,
 		Status: StatusScheduled, Location: strings.TrimSpace(in.Location),
 		Notes: strings.TrimSpace(in.Notes),
 	}
 
-	if err := tx.QueryRow(ctx, `
+	// DO NOTHING on the id, so a retried push converges on the booking it
+	// already made. The overlap constraint is a different constraint and still
+	// refuses a clash, which is the point.
+	err := tx.QueryRow(ctx, `
 		INSERT INTO sessions
 			(id, tenant_id, session_type_id, starts_at, ends_at, blocked_range, location, notes)
 		VALUES ($1, $2, $3, $4, $5, tstzrange($4, $6, '[)'), $7, $8)
+		ON CONFLICT (id) DO NOTHING
 		RETURNING server_seq`,
 		session.ID, tenantID, in.SessionTypeID, startsAt, endsAt, blockedUntil,
 		session.Location, session.Notes,
-	).Scan(&session.ServerSeq); err != nil {
+	).Scan(&session.ServerSeq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, readErr := s.Get(ctx, tx, session.ID)
+		if readErr != nil {
+			return Session{}, db.ErrIDTakenElsewhere("session")
+		}
+		return existing, nil
+	}
+	if err != nil {
 		if isExclusionViolation(err) {
 			return Session{}, errs.Conflict(errs.CodeSchedulingConflict,
 				"that slot overlaps an existing session, including the %d-minute buffer", bufferMinutes).
@@ -223,8 +247,12 @@ func (s *Service) Book(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in BookI
 		return Session{}, errs.Internal(err, "create session")
 	}
 
-	for _, clientID := range in.ClientIDs {
-		if _, err := s.addAttendee(ctx, tx, tenantID, session.ID, clientID); err != nil {
+	for i, clientID := range in.ClientIDs {
+		var attendeeID *ids.ID
+		if len(in.AttendeeIDs) > 0 {
+			attendeeID = &in.AttendeeIDs[i]
+		}
+		if _, err := s.addAttendee(ctx, tx, tenantID, session.ID, clientID, attendeeID); err != nil {
 			return Session{}, err
 		}
 	}
@@ -232,15 +260,19 @@ func (s *Service) Book(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in BookI
 	return s.Get(ctx, tx, session.ID)
 }
 
-// addAttendee puts one client on a session's roster.
-func (s *Service) addAttendee(ctx context.Context, tx pgx.Tx, tenantID, sessionID, clientID ids.ID) (Attendee, error) {
-	a := Attendee{ID: ids.New(), SessionID: sessionID, ClientID: clientID, Status: Scheduled}
+// addAttendee puts one client on a session's roster, under the id the device
+// minted when it supplies one.
+func (s *Service) addAttendee(ctx context.Context, tx pgx.Tx, tenantID, sessionID, clientID ids.ID, id *ids.ID) (Attendee, error) {
+	a := Attendee{ID: db.ResolveID(id), SessionID: sessionID, ClientID: clientID, Status: Scheduled}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO session_attendees (id, tenant_id, session_id, client_id) VALUES ($1, $2, $3, $4)`,
 		a.ID, tenantID, sessionID, clientID); err != nil {
 		if db.IsUniqueViolation(err, "session_attendees_unique") {
 			return Attendee{}, errs.Conflict("already_booked",
 				"that client is already on this session's roster")
+		}
+		if db.IsUniqueViolation(err, "session_attendees_pkey") {
+			return Attendee{}, db.ErrIDTakenElsewhere("attendee")
 		}
 		if db.IsCheckViolation(err, "") {
 			return Attendee{}, errs.Conflict(errs.CodeSchedulingConflict, "this session is full")
@@ -255,7 +287,7 @@ func (s *Service) addAttendee(ctx context.Context, tx pgx.Tx, tenantID, sessionI
 
 // AddAttendee puts an additional client on an existing session's roster.
 func (s *Service) AddAttendee(ctx context.Context, tx pgx.Tx, tenantID, sessionID, clientID ids.ID) (Attendee, error) {
-	return s.addAttendee(ctx, tx, tenantID, sessionID, clientID)
+	return s.addAttendee(ctx, tx, tenantID, sessionID, clientID, nil)
 }
 
 // Get loads a session with its roster.

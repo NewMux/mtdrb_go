@@ -61,9 +61,14 @@ func run() error {
 
 	// Signup provisions the tenant's chart of accounts in the same transaction
 	// that creates the tenant: a tenant that cannot post is not a usable one.
+	// The same transaction seeds what a new trainer needs on day one: an
+	// exercise library to build from and session types to book.
 	ledgerSvc := ledger.NewService(wall)
 	programmingSvc := programming.NewService(wall)
-	authSvc := auth.NewService(pool, issuer, ledgerSvc, programmingSvc, wall, auth.DefaultArgon2Params())
+	billingSvc := billing.NewService(ledgerSvc, wall)
+	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
+	authSvc := auth.NewService(pool, issuer, ledgerSvc,
+		auth.LibrarySeeders{programmingSvc, schedulingSvc}, wall, auth.DefaultArgon2Params())
 
 	presigner, err := media.NewS3Presigner(media.S3Config{
 		Endpoint:  cfg.StorageEndpoint,
@@ -83,8 +88,6 @@ func run() error {
 
 	crmSvc := crm.NewService(wall, cfg.ColumnEncryptionKey)
 	mediaSvc := media.NewService(presigner, wall, cfg.PresignTTL)
-	billingSvc := billing.NewService(ledgerSvc, wall)
-	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
 
 	srv := api.New(cfg, pool, log, api.Deps{
 		Auth:        auth.NewHandler(authSvc),

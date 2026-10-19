@@ -191,24 +191,8 @@ func (s *Service) Prescribe(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in 
 	if in.TargetSets <= 0 {
 		in.TargetSets = 3
 	}
-	if in.TargetSets > 50 {
-		return Prescription{}, errs.Invalid(errs.CodeValidation, "that is too many sets").
-			WithField("target_sets", "must be between 1 and 50")
-	}
-	if in.TargetRepsMin != nil && in.TargetRepsMax != nil && *in.TargetRepsMax < *in.TargetRepsMin {
-		return Prescription{}, errs.Invalid(errs.CodeValidation,
-			"the rep range is inverted").
-			WithField("target_reps_max", "must not be below target_reps_min")
-	}
-	if in.TargetRPETenths != nil && (*in.TargetRPETenths < 0 || *in.TargetRPETenths > 100) {
-		return Prescription{}, errs.Invalid(errs.CodeValidation,
-			"RPE is measured from 0 to 10").
-			WithField("target_rpe_tenths", "must be between 0 and 100 tenths")
-	}
-	if in.TargetRIR != nil && (*in.TargetRIR < 0 || *in.TargetRIR > 10) {
-		return Prescription{}, errs.Invalid(errs.CodeValidation,
-			"reps in reserve must be between 0 and 10").
-			WithField("target_rir", "must be between 0 and 10")
+	if err := validatePrescription(in.TargetSets, in.TargetRepsMin, in.TargetRepsMax, in.TargetRPETenths, in.TargetRIR); err != nil {
+		return Prescription{}, err
 	}
 
 	p := Prescription{
@@ -446,6 +430,8 @@ type Assignment struct {
 
 // AssignInput describes assigning a programme.
 type AssignInput struct {
+	// ID is the id the device minted offline, when there is one.
+	ID        *ids.ID
 	ProgramID ids.ID
 	ClientID  ids.ID
 	StartsOn  time.Time
@@ -474,6 +460,15 @@ func (s *Service) Assign(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Ass
 		in.EndsOn = &e
 	}
 
+	id := db.ResolveID(in.ID)
+	// A replayed push converges on the assignment it already made, rather than
+	// closing it and failing to insert it again.
+	if in.ID != nil {
+		if existing, err := s.assignmentByID(ctx, tx, id); err == nil {
+			return existing, nil
+		}
+	}
+
 	if _, err := tx.Exec(ctx,
 		`UPDATE program_assignments SET status = 'completed'
 		  WHERE client_id = $1 AND status = 'active'`, in.ClientID); err != nil {
@@ -481,7 +476,7 @@ func (s *Service) Assign(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Ass
 	}
 
 	a := Assignment{
-		ID: ids.New(), ProgramID: in.ProgramID, ClientID: in.ClientID,
+		ID: id, ProgramID: in.ProgramID, ClientID: in.ClientID,
 		StartsOn: startsOn, EndsOn: in.EndsOn, Status: "active",
 		Notes: strings.TrimSpace(in.Notes),
 	}
@@ -494,7 +489,30 @@ func (s *Service) Assign(ctx context.Context, tx pgx.Tx, tenantID ids.ID, in Ass
 		if db.IsForeignKeyViolation(err) {
 			return Assignment{}, errs.NotFound("programme or client")
 		}
+		if db.IsUniqueViolation(err, "program_assignments_pkey") {
+			// Not visible above, yet the key exists: another tenant's id.
+			return Assignment{}, db.ErrIDTakenElsewhere("assignment")
+		}
 		return Assignment{}, errs.Internal(err, "assign programme")
+	}
+	return a, nil
+}
+
+// assignmentByID loads one assignment under row-level security.
+func (s *Service) assignmentByID(ctx context.Context, tx pgx.Tx, id ids.ID) (Assignment, error) {
+	var a Assignment
+	if err := tx.QueryRow(ctx, `
+		SELECT a.id, a.program_id, p.name, a.client_id, a.starts_on, a.ends_on,
+		       a.status::text, a.notes, a.server_seq
+		  FROM program_assignments a
+		  JOIN programs p ON p.id = a.program_id
+		 WHERE a.id = $1`, id,
+	).Scan(&a.ID, &a.ProgramID, &a.ProgramName, &a.ClientID, &a.StartsOn,
+		&a.EndsOn, &a.Status, &a.Notes, &a.ServerSeq); err != nil {
+		if db.IsNoRows(err) {
+			return Assignment{}, errs.NotFound("assignment")
+		}
+		return Assignment{}, errs.Internal(err, "load assignment")
 	}
 	return a, nil
 }

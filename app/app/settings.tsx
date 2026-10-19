@@ -6,13 +6,14 @@
  * server.
  */
 
-import React from 'react';
-import { Alert, Platform, View } from 'react-native';
+import React, { useState } from 'react';
+import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
 
 import { DEMO, useApp } from '@/state/app';
 import { Avatar, Body, HStack, ListRow, Section, Segmented, T, VStack } from '@/ui/components';
+import { ActionSheet } from '@/ui/sheet';
 import { describe } from '@/ui/sync-badge';
 import { space } from '@/ui/theme';
 
@@ -21,20 +22,10 @@ export default function SettingsScreen() {
   const router = useRouter();
   const status = describe(sync);
 
-  const confirmSignOut = () => {
-    const message = sync.pending > 0
-      ? `${sync.pending} change${sync.pending === 1 ? ' is' : 's are'} still waiting to send. They stay on this device and send when you sign back in.`
-      : 'You can sign back in at any time.';
-    if (Platform.OS === 'web') {
-      // eslint-disable-next-line no-alert
-      if (window.confirm(`Sign out?\n\n${message}`)) void signOut();
-      return;
-    }
-    Alert.alert('Sign Out?', message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: () => { void signOut(); } },
-    ]);
-  };
+  const [confirming, setConfirming] = useState(false);
+  const signOutMessage = sync.pending > 0
+    ? `${sync.pending} change${sync.pending === 1 ? ' is' : 's are'} still waiting to send. They stay on this device and send when you sign back in.`
+    : 'You can sign back in at any time.';
 
   return (
     <Body>
@@ -102,12 +93,20 @@ export default function SettingsScreen() {
       </Section>
 
       <Section footer={DEMO ? 'This is a demo build with no server. Everything you do stays in this browser.' : undefined}>
-        <ListRow first title="Sign Out" destructive accessory="none" onPress={confirmSignOut} />
+        <ListRow first title="Sign Out" destructive accessory="none" onPress={() => setConfirming(true)} />
       </Section>
 
       <T variant="footnote" tone="label3" align="center" style={{ marginTop: space.xl }}>
         CoachPulse {Constants.expoConfig?.version ?? ''}
       </T>
+
+      <ActionSheet
+        visible={confirming}
+        title="Sign out?"
+        message={signOutMessage}
+        onClose={() => setConfirming(false)}
+        actions={[{ label: 'Sign Out', destructive: true, onPress: () => { void signOut(); } }]}
+      />
     </Body>
   );
 }

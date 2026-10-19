@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { Alert, Platform, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { markAttendance } from '@/features/actions';
@@ -28,6 +28,7 @@ import {
   Avatar, Button, Card, EmptyState, HStack, IconButton, IconTile, ListRow, Page, Section,
   Spacer, Stat, StatGrid, T, Tag, tap, VStack,
 } from '@/ui/components';
+import { ActionSheet } from '@/ui/sheet';
 import { SyncBadge } from '@/ui/sync-badge';
 import { clockTime } from '@/ui/format';
 import type { IconName } from '@/ui/icon';
@@ -50,6 +51,8 @@ export default function TodayScreen() {
   const s = useStyles();
   const [open, setOpen] = useState<string | null>(null);
   const [allTips, setAllTips] = useState(false);
+  /** The client being marked attended with nothing left on their pack. */
+  const [noCredit, setNoCredit] = useState<Entry | null>(null);
 
   const roster = useQuery(async (database): Promise<Entry[]> => {
     const rows = await todaysRoster(database);
@@ -82,24 +85,7 @@ export default function TodayScreen() {
    */
   const attended = (entry: Entry) => {
     if (entry.creditsRemaining > 0) { void mark(entry, 'completed'); return; }
-    const renew = () => router.push({ pathname: '/sell-package', params: { client: entry.clientId, name: entry.clientName } });
-    const overdraft = () => { void mark(entry, 'completed', true); };
-    if (Platform.OS === 'web') {
-      // Alert with buttons is a no-op on web; confirm is the closest honest equivalent.
-      // eslint-disable-next-line no-alert
-      if (window.confirm(`${entry.clientName} has no sessions left.\n\nOK records this one against an overdraft. Cancel to renew their package instead.`)) overdraft();
-      else renew();
-      return;
-    }
-    Alert.alert(
-      'No sessions left',
-      `${entry.clientName} has used their pack. Renew now, or record this session as an overdraft.`,
-      [
-        { text: 'Renew Package', onPress: renew },
-        { text: 'Record as Overdraft', onPress: overdraft },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+    setNoCredit(entry);
   };
 
   const train = async (entry: Entry) => {
@@ -283,6 +269,20 @@ export default function TodayScreen() {
         </T>
       ) : null}
       <Spacer size={space.lg} />
+
+      <ActionSheet
+        visible={!!noCredit}
+        title={noCredit ? `${noCredit.clientName} has no sessions left` : undefined}
+        message="Renew their package now, or record this session as an overdraft to settle later."
+        onClose={() => setNoCredit(null)}
+        actions={noCredit ? [
+          {
+            label: 'Renew Package', icon: 'cart', hue: 'tint',
+            onPress: () => router.push({ pathname: '/sell-package', params: { client: noCredit.clientId, name: noCredit.clientName } }),
+          },
+          { label: 'Record as Overdraft', icon: 'invoice', hue: 'orange', onPress: () => { void mark(noCredit, 'completed', true); } },
+        ] : []}
+      />
     </Page>
   );
 }

@@ -1185,6 +1185,30 @@ components:
         - client.create
         - client.update
         - biometrics.record
+        - session.book
+        - session.reschedule
+        - session.cancel
+        - program.save
+        - program.assign
+      description: |
+        session.book carries `id` and `attendee_ids` (one per `client_ids`
+        entry) minted by the device, so a session booked offline can be
+        marked offline in the same batch. A clash with an existing booking,
+        including the tenant's buffer, is a `scheduling_conflict` conflict.
+
+        session.reschedule takes `session_id` and `starts_at`; session.cancel
+        takes `session_id` and is idempotent — re-cancelling succeeds.
+
+        program.save carries a whole programme document in the shape of the
+        `programs` sync row's `structure` (blocks → days → prescriptions,
+        every level with a device-minted `id`) plus `name`, `description`,
+        `is_template` and `archived`. It creates or replaces the programme;
+        rows missing from the document are removed, and workouts logged
+        against them keep their history with the reference cleared. An id
+        belonging to another programme is an `id_already_used` conflict.
+
+        program.assign takes `id`, `program_id`, `client_id` and `starts_on`,
+        and completes whatever programme the client was following.
 
     PushResult:
       type: object

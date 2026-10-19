@@ -86,8 +86,28 @@ var collections = []collection{
 	{"exercises", "exercises", `id, name, category::text AS category, primary_muscle,
 		equipment, instructions, video_url, demo_media_id, is_custom, archived_at`},
 
+	// The structure travels on the programme row as one document — blocks,
+	// days, prescriptions — because the builder edits and saves it whole, and
+	// SaveProgram touches the programme row on every save so its server_seq
+	// moves whenever anything inside it does. Built field by field, like every
+	// other projection here.
 	{"programs", "programs", `id, name, description, is_template, archived_at,
-		created_at, updated_at`},
+		created_at, updated_at,
+		(SELECT jsonb_build_object('blocks', coalesce(jsonb_agg(jsonb_build_object(
+			'id', b.id, 'name', b.name, 'weeks', b.weeks, 'sort_order', b.sort_order, 'notes', b.notes,
+			'days', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+				'id', d.id, 'name', d.name, 'sort_order', d.sort_order, 'notes', d.notes,
+				'prescriptions', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+					'id', pe.id, 'exercise_id', pe.exercise_id, 'sort_order', pe.sort_order,
+					'target_sets', pe.target_sets, 'target_reps_min', pe.target_reps_min,
+					'target_reps_max', pe.target_reps_max, 'target_load_grams', pe.target_load_grams,
+					'target_rpe_tenths', pe.target_rpe_tenths, 'target_rir', pe.target_rir,
+					'rest_seconds', pe.rest_seconds, 'tempo', pe.tempo,
+					'superset_group', pe.superset_group, 'notes', pe.notes
+				) ORDER BY pe.sort_order), '[]'::jsonb) FROM program_exercises pe WHERE pe.day_id = d.id)
+			) ORDER BY d.sort_order), '[]'::jsonb) FROM program_days d WHERE d.block_id = b.id)
+		) ORDER BY b.sort_order), '[]'::jsonb))
+		   FROM program_blocks b WHERE b.program_id = programs.id) AS structure`},
 
 	{"program_assignments", "program_assignments", `id, program_id, client_id, starts_on,
 		ends_on, status::text AS status, notes, created_at, updated_at`},
@@ -103,8 +123,8 @@ var collections = []collection{
 
 // session_types, program_blocks, program_days and program_exercises carry no
 // server_seq of their own. The first is small enough to send whole; the
-// programme structure is fetched as an aggregate when its programme row
-// changes, because a block edited in isolation is not a thing a trainer does.
+// programme structure rides on its programme row (see above), because a block
+// edited in isolation is not a thing a trainer does.
 var wholeTableCollections = map[string]bool{"session_types": true}
 
 // Cursor tracks progress per collection.

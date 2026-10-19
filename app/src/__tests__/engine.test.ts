@@ -1,6 +1,6 @@
 import { MemoryDatabase, stubFetch, memoryTokens } from './support';
 import { ApiClient } from '@/api/client';
-import { pull, push, synchronise } from '@/sync/engine';
+import { canonicalInstant, pull, push, synchronise } from '@/sync/engine';
 import * as outbox from '@/sync/outbox';
 import { getMeta } from '@/db/types';
 import { newId } from '@/lib/id';
@@ -363,3 +363,24 @@ describe('what a push reveals', () => {
   });
 });
 
+
+describe('canonicalInstant', () => {
+  it('rewrites a Postgres timestamptz into the device form', () => {
+    expect(canonicalInstant('2026-10-20T07:00:00+00:00')).toBe('2026-10-20T07:00:00.000Z');
+    expect(canonicalInstant('2026-10-20T09:00:00+02:00')).toBe('2026-10-20T07:00:00.000Z');
+    expect(canonicalInstant('2026-10-20T07:00:00.123456Z')).toBe('2026-10-20T07:00:00.123Z');
+  });
+
+  it('leaves dates and ordinary text alone', () => {
+    expect(canonicalInstant('2026-10-20')).toBe('2026-10-20');
+    expect(canonicalInstant('Studio')).toBe('Studio');
+    expect(canonicalInstant('Notes: 2026-10-20T07:00 was hard')).toBe('Notes: 2026-10-20T07:00 was hard');
+  });
+
+  it('makes a session starting on a window edge fall inside the window', () => {
+    // The bug the live run found: compared as text, "+00:00" sorted before ".000Z".
+    const from = new Date('2026-10-20T07:00:00Z').toISOString();
+    expect('2026-10-20T07:00:00+00:00' >= from).toBe(false);
+    expect(canonicalInstant('2026-10-20T07:00:00+00:00') >= from).toBe(true);
+  });
+});

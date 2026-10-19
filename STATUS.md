@@ -1,6 +1,6 @@
 # CoachPulse — Build Status
 
-**Branch:** `claude/charming-lamport-mlpjxw` · **Last updated:** 2026-09-19
+**Branch:** `claude/charming-lamport-mlpjxw` · **Last updated:** 2026-10-19
 
 **PRD Phase 1 is complete**, and — as of this revision — actually verified
 end to end: the client's own sync engine, outbox and API client driven against
@@ -15,14 +15,76 @@ To run it yourself: [RUNNING.md](RUNNING.md).
 |---|---|
 | Milestones done | 8 of 8 |
 | Server tests | 186, green under `-race` |
-| Client tests | 74 offline, plus 7 against a live server |
+| Client tests | 107 offline, plus 8 against a live server |
 | Production Go | ~12,700 lines |
 | Test Go | ~7,400 lines |
 | Migrations | 7, each verified to roll back and reapply |
 | Tables | 35, every one under row-level security |
-| Client routes | 14, every one bundles |
+| Client routes | 23, every one bundles |
 
 ---
+
+## v2 — the coaching half, in the iOS 27 idiom (2026-10-19)
+
+Plan and decisions: [docs/PLAN-v2.md](docs/PLAN-v2.md). Trainer-only, manual
+payments, new design system. The offline engine, outbox and ledger rules are
+unchanged; everything below sits on top of them.
+
+**App.** Rebuilt on a design system that is the platform's own on iOS —
+NativeTabs (the Liquid Glass tab bar), `expo-glass-effect`, SF Symbols via
+`expo-symbols`, Apple's semantic palette in light and dark — with glass and
+Ionicons fallbacks drawn to the same shapes on web and Android. Five tabs:
+Today (nudges ranked money-first, schedule with each client's programmed day),
+Calendar (week strip, hour-by-hour day, fortnight agenda, thumb-first booking
+with clashes struck through, weekly repeats), Clients (filters; a contact-card
+profile with Overview / Training / Progress / Billing and WhatsApp/SMS
+templates), Programs (builder that saves as you type; nine starter templates),
+Business (earned from the ledger kept apart from collected and owed). The
+logger opens on the programmed day with planned sets as rows to tick, a
+double-progression suggestion with its reason, plate maths, warm-up ramps, an
+automatic rest timer and PR detection.
+
+**Server.** Five new sync operations, each honouring device-minted ids:
+`session.book` (session and attendee ids), `session.reschedule`,
+`session.cancel` (idempotent), `program.save` (the whole programme, upserted by
+id and pruned; logs against removed days survive with the reference cleared)
+and `program.assign`. The `programs` pull row now carries its structure, and
+every save touches the row so an edit deep inside reaches other devices.
+Signup seeds three session types alongside the exercise library, so a new
+trainer can book on day one.
+
+| | |
+|---|---|
+| Client tests | 107 offline, plus 8 against a live server |
+| Server | all integration packages green; 7 new sync integration tests, 1 API test |
+| Lint | `golangci-lint` 0 issues; `go vet` clean with and without `integration` |
+
+### The bug the live run caught, again
+
+Driving the client's real engine against a running server found one more
+wire-format mismatch neither suite could: Postgres renders a timestamptz as
+`2026-10-20T07:00:00+00:00`, the device writes `…07:00:00.000Z`, and every
+time-window query on the device compares them as text. `+` sorts before `.`,
+so a session starting exactly on a window's edge fell outside it — and under a
+non-UTC database session the ordering would be wrong outright. Pulled
+instants are now normalised to one canonical form at the sync boundary
+(`canonicalInstant` in `app/src/sync/engine.ts`), which fixes every comparison
+at once.
+
+Two other things the new tests caught: the plate calculator loaded 225 lb as
+45 + 35 + 5 + 2.5 a side (grams rounding back to pounds a hair under a plate),
+and the existing API tests created a "1-on-1" session type that signup now
+seeds.
+
+### Next
+
+Swap-exercise in the logger; financial reports screen (P&L, ageing — the
+ledger already computes them); goals, injuries and tags in intake; share links
+for a workout recap and a monthly progress report; the worker (STATUS item 1
+below still stands). Session types created after a device's first sync do not
+reach it — `session_types` is a whole-table collection sent once — which wants
+a `server_seq` before trainers can add their own.
+
 
 ## What was built
 

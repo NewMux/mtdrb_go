@@ -75,11 +75,12 @@ func newHarness(t *testing.T) *harness {
 
 	ledgerSvc := ledger.NewService(wall)
 	programmingSvc := programming.NewService(wall)
-	authSvc := auth.NewService(pool, issuer, ledgerSvc, programmingSvc, wall, params)
-	crmSvc := crm.NewService(wall, []byte(strings.Repeat("c", 32)))
-	mediaSvc := media.NewService(&fakePresigner{}, wall, cfg.PresignTTL)
 	billingSvc := billing.NewService(ledgerSvc, wall)
 	schedulingSvc := scheduling.NewService(billingSvc, ledgerSvc, wall)
+	authSvc := auth.NewService(pool, issuer, ledgerSvc,
+		auth.LibrarySeeders{programmingSvc, schedulingSvc}, wall, params)
+	crmSvc := crm.NewService(wall, []byte(strings.Repeat("c", 32)))
+	mediaSvc := media.NewService(&fakePresigner{}, wall, cfg.PresignTTL)
 	cfg.PublicBaseURL = "https://app.coachpulse.test"
 
 	srv := api.New(cfg, pool, slog.New(slog.DiscardHandler), api.Deps{
@@ -177,6 +178,28 @@ func TestHealthAndReadiness(t *testing.T) {
 	}
 	if status, body := h.do(http.MethodGet, "/readyz", "", nil); status != http.StatusOK || body["status"] != "ready" {
 		t.Errorf("readyz = %d %v", status, body)
+	}
+}
+
+// A new trainer can book someone on day one: signup seeds the session types
+// the booking sheet offers, in the same transaction as the tenant.
+func TestSignupSeedsBookableSessionTypes(t *testing.T) {
+	h := newHarness(t)
+	token := h.signup("fresh@gym.io")
+
+	status, body := h.do(http.MethodGet, "/v1/sessions/session-types", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list session types = %d %v", status, body)
+	}
+	types, _ := body["session_types"].([]any)
+	names := map[string]bool{}
+	for _, raw := range types {
+		names[raw.(map[string]any)["name"].(string)] = true
+	}
+	for _, want := range []string{"1-on-1", "Duo", "Assessment"} {
+		if !names[want] {
+			t.Errorf("session type %q was not seeded; got %v", want, names)
+		}
 	}
 }
 
@@ -447,7 +470,7 @@ func TestJourneyAOverHTTP(t *testing.T) {
 	clientID := client["id"].(string)
 
 	status, sessionType := h.do(http.MethodPost, "/v1/sessions/session-types", token, map[string]any{
-		"name": "1-on-1", "duration_minutes": 60, "capacity": 1, "credit_cost": 1,
+		"name": "PT hour", "duration_minutes": 60, "capacity": 1, "credit_cost": 1,
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("create session type = %d %v", status, sessionType)
@@ -539,7 +562,7 @@ func TestBufferConflictOverHTTP(t *testing.T) {
 	_, client := h.do(http.MethodPost, "/v1/clients", token, map[string]any{"full_name": "Client A"})
 	clientID := client["id"].(string)
 	_, sessionType := h.do(http.MethodPost, "/v1/sessions/session-types", token, map[string]any{
-		"name": "1-on-1", "duration_minutes": 60, "capacity": 1, "credit_cost": 1,
+		"name": "PT hour", "duration_minutes": 60, "capacity": 1, "credit_cost": 1,
 	})
 	typeID := sessionType["id"].(string)
 

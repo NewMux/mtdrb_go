@@ -1,6 +1,6 @@
 # CoachPulse v2: plan for sign-off
 
-**Status:** draft for review · **Date:** 2026-10-19
+**Status:** in progress — slices 1–4 shipped, 5 mostly · **Date:** 2026-10-19
 
 ## Decisions already made
 
@@ -10,6 +10,12 @@
 | How clients pay | **Manual only:** cash, bank transfer, P2P. No card gateway. |
 | Visual direction | **New design system.** Replaces the lime-on-charcoal look. |
 | Process | Plan first (this doc), then build in slices on this branch. |
+| Visual idiom | **iOS 27** — Liquid Glass, system palette, SF Symbols. |
+| Share links | Yes (later slice) — read-only pages, no client accounts. |
+| Primary colour | iOS system tint (blue); system colours for status only. |
+| Units | kg / lb toggle, per device. |
+| Templates | Nine starter programmes written for v2 (see `app/src/features/library.ts`). |
+| Pricing | Single plan; no client limits or plan gating. |
 
 ---
 
@@ -233,7 +239,21 @@ Client accounts or app · card payments · in-app messaging · nutrition
 tracking · two-way calendar sync · multi-trainer teams · wearables.
 Each could be a later tier. Teams in particular is the natural "$40 Studio plan".
 
-## 7. Open questions
+## 7. Progress
+
+| # | Slice | State |
+|---|---|---|
+| 1 | Design system + shell | **Done** — native Liquid Glass tab bar on iOS, glass fallback on web/Android, light/dark |
+| 2 | Today + client profile | **Done** — nudges, session prep, tabbed profile, charts, message templates |
+| 3 | Calendar and booking | **Done** — day/agenda views, book/repeat/reschedule/cancel offline, server ops + tests |
+| 4 | Programme builder + templates | **Done** — builder, 9 templates, assign, pull carries structure, server ops + tests |
+| 5 | Logger v2 | **Mostly** — programmed day, progression suggestions, rest timer, plates, warm-ups, PRs, summary. Swap-exercise not yet |
+| 6–10 | Business reports, intake/goals, share links, worker, insights | Not started (Business tab shows device-side figures and the server's earned revenue) |
+
+## 8. Open questions (answered)
+
+The questions below were settled as recorded in the decisions table at the top.
+
 
 1. **Share links (workout card, progress report):** OK to include? They're
    read-only pages, not client accounts.

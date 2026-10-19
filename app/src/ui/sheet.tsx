@@ -64,7 +64,7 @@ export function ActionSheet({
             );
           })}
         </Glass>
-        <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [{ marginTop: space.sm }, pressed && { opacity: 0.7 }]}>
+        <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.cancelWrap, pressed && { opacity: 0.7 }]}>
           <Glass style={[styles.panel, styles.cancel]} intensity={80}>
             <T variant="headline" style={{ color: c.tint }}>Cancel</T>
           </Glass>
@@ -80,4 +80,5 @@ const styles = StyleSheet.create({
   head: { padding: space.lg, gap: 2 },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.xl, paddingVertical: 14, minHeight: 56 },
   cancel: { alignItems: 'center', justifyContent: 'center', height: 56 },
+  cancelWrap: { marginTop: space.sm, width: '100%', maxWidth: 520 },
 });

@@ -54,6 +54,7 @@ async function upsertRow(
     // SQLite has no boolean or object types.
     if (typeof value === 'boolean') return value ? 1 : 0;
     if (typeof value === 'object') return JSON.stringify(value);
+    if (typeof value === 'string') return canonicalInstant(value);
     return value;
   });
 
@@ -80,6 +81,29 @@ async function upsertRow(
      ON CONFLICT (id) DO UPDATE SET ${updates}`,
     values,
   );
+}
+
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * Rewrites a timestamp into the one form the device stores: UTC, with
+ * milliseconds, ending in Z — exactly what `Date.toISOString()` produces.
+ *
+ * Every time-window query on the device compares these as strings, which is
+ * only correct if they share a format. Postgres renders a timestamptz as
+ * "2026-10-20T07:00:00+00:00" (and in the session's own offset, if that is not
+ * UTC), while a row the device wrote itself says "2026-10-20T07:00:00.000Z".
+ * Compared as text, "+" sorts before ".", so a session starting exactly at the
+ * edge of a window fell outside it — and with a non-UTC offset the ordering is
+ * simply wrong. Normalising on the way in fixes every comparison at once.
+ *
+ * Plain dates ("2026-10-20") are left as they are: they are days, not
+ * instants, and have no offset to reconcile.
+ */
+export function canonicalInstant(value: string): string {
+  if (!INSTANT.test(value)) return value;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? value : new Date(ms).toISOString();
 }
 
 /** Reads a local table's columns, so a pulled row can be matched to them. */
