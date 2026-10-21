@@ -16,7 +16,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
 import { AppProvider, useApp } from '@/state/app';
-import { EmptyState } from '@/ui/components';
+import { EmptyState, IconButton } from '@/ui/components';
 import { ThemeProvider, useTheme } from '@/ui/theme';
 
 /**
@@ -41,11 +41,29 @@ function AuthGate() {
   return null;
 }
 
+/**
+ * The header buttons iOS draws itself: a glass circle holding a chevron to go
+ * back, or an X to dismiss a sheet. On iOS the system supplies both, so these
+ * exist only where the platform would otherwise show a bare arrow.
+ */
+function GlassBack({ icon, label }: { icon: 'chevronLeft' | 'close'; label: string }) {
+  const router = useRouter();
+  return (
+    <View style={{ marginHorizontal: 8 }}>
+      <IconButton icon={icon} label={label} size={36} onPress={() => router.back()} />
+    </View>
+  );
+}
+const backButton = Platform.OS === 'ios'
+  ? {}
+  : { headerLeft: ({ canGoBack }: { canGoBack?: boolean }) => (canGoBack ? <GlassBack icon="chevronLeft" label="Back" /> : null) };
+
 /** A sheet: grabber, rounded top, the content behind dimmed and pushed back. */
 const sheet = {
   presentation: Platform.OS === 'ios' ? 'formSheet' : 'modal',
   sheetGrabberVisible: true,
   sheetCornerRadius: 28,
+  ...(Platform.OS === 'ios' ? {} : { headerLeft: () => <GlassBack icon="close" label="Close" /> }),
 } as const;
 
 function Shell() {
@@ -86,6 +104,8 @@ function Shell() {
           headerTitleStyle: { color: c.label, fontWeight: '600' },
           headerShadowVisible: false,
           headerBackButtonDisplayMode: 'minimal',
+          headerTitleAlign: 'center',
+          ...backButton,
           headerTransparent: Platform.OS === 'ios',
           headerBlurEffect: Platform.OS === 'ios' ? (scheme === 'dark' ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight') : undefined,
           contentStyle: { backgroundColor: c.bg },
@@ -110,7 +130,10 @@ function Shell() {
           title: 'Create', ...sheet, headerShown: false,
           ...(Platform.OS === 'ios' ? { sheetAllowedDetents: [0.52, 0.9] } : {}),
         }} />
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+        <Stack.Screen name="settings" options={{
+          title: 'Settings',
+          ...(Platform.OS === 'ios' ? { headerLargeTitle: true, headerLargeTitleShadowVisible: false, headerLargeStyle: { backgroundColor: c.bg } } : {}),
+        }} />
         <Stack.Screen name="sync" options={{ title: 'Sync', ...sheet }} />
       </Stack>
     </>

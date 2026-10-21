@@ -24,7 +24,7 @@ import { lowBalanceClients, outstandingInvoices } from '@/features/queries';
 import { DEMO, useApp, useQuery } from '@/state/app';
 import { BarChart } from '@/ui/charts';
 import {
-  Avatar, Banner, Card, EmptyState, HStack, ListRow, Page, Section, Spacer, Stat, StatGrid, T, Tag, VStack,
+  Avatar, Banner, Card, EmptyState, ListRow, Page, Section, Spacer, Stat, StatGrid, T, Tag, VStack,
 } from '@/ui/components';
 import { SyncBadge } from '@/ui/sync-badge';
 import { dueLabel, money, shortDate } from '@/ui/format';
@@ -88,10 +88,7 @@ export default function BusinessScreen() {
       {summary ? (
         <Card style={{ marginHorizontal: space.lg }}>
           <T variant="footnote" weight="600" tone="green">EARNED THIS MONTH</T>
-          <HStack gap={6} align="baseline" style={{ marginTop: 4 }}>
-            <T variant="metric">{money(summary.income_this_month.minor, summary.currency).replace(` ${summary.currency}`, '')}</T>
-            <T variant="subhead" tone="label2">{summary.currency}</T>
-          </HStack>
+          <T variant="metric" style={{ marginTop: 4 }}>{money(summary.income_this_month.minor, summary.currency)}</T>
           <T variant="footnote" tone="label2">Recognised as sessions were delivered — prepaid packs count when they are trained, not when they are sold.</T>
         </Card>
       ) : null}
@@ -109,7 +106,7 @@ export default function BusinessScreen() {
 
       <Section title="Overview" plain>
         <StatGrid>
-          <Stat icon="invoice" hue="orange" label="Owed to you" value={money(owed, currency).replace(` ${currency}`, '')} unit={currency}
+          <Stat icon="invoice" hue="orange" label="Owed to you" value={money(owed, currency)}
             footnote={overdue.length ? `${overdue.length} overdue` : `${rows.length} open`} />
           <Stat icon="wallet" hue="indigo" label="Prepaid sessions" value={String(st?.prepaidCredits ?? 0)} footnote="still to deliver" />
           <Stat icon="clients" hue="tint" label="Active clients" value={String(st?.activeClients ?? 0)}
@@ -119,8 +116,7 @@ export default function BusinessScreen() {
             value={st?.noShowRate == null ? '—' : String(Math.round(st.noShowRate * 100))}
             unit={st?.noShowRate == null ? undefined : '%'} footnote="this month" />
           <Stat icon="cart" hue="purple" label="Average pack"
-            value={st?.averagePackMinor == null ? '—' : money(st.averagePackMinor, currency).replace(` ${currency}`, '')}
-            unit={st?.averagePackMinor == null ? undefined : currency} />
+            value={st?.averagePackMinor == null ? '—' : money(st.averagePackMinor, currency)} />
         </StatGrid>
       </Section>
 

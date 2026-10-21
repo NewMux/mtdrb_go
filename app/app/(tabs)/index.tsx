@@ -112,7 +112,7 @@ export default function TodayScreen() {
   const marked = entries.filter((e) => e.status !== 'scheduled').length;
   const next = entries.find((e) => e.status === 'scheduled' && new Date(e.endsAt) > new Date());
   const firstName = (account?.display_name ?? '').split(' ')[0] || 'Coach';
-  const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  const today = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 
   return (
     <Page

@@ -10,6 +10,7 @@
  */
 
 import type { Database } from '@/db/types';
+import { money } from '@/ui/format';
 import { lowBalanceClients, type LowBalanceClient } from './queries';
 
 /* ─────────────────────────────── today ─────────────────────────────── */
@@ -59,7 +60,7 @@ export async function nudges(db: Database, threshold = 2, now = new Date()): Pro
     out.push({
       key: 'overdue', kind: 'overdue', count: overdue!.n,
       title: `${overdue!.n} overdue invoice${overdue!.n === 1 ? '' : 's'}`,
-      detail: `${(overdue!.total / 100).toFixed(2)} ${overdue!.currency ?? ''} past its due date.`.trim(),
+      detail: `${money(overdue!.total, overdue!.currency ?? '')} past its due date.`,
     });
   }
 

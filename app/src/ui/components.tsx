@@ -162,7 +162,7 @@ export function Page({
       >
         <View style={s.titleRow}>
           <View style={{ flex: 1 }}>
-            {eyebrow ? <T variant="footnote" tone="label2" weight="600" style={s.eyebrow}>{eyebrow.toUpperCase()}</T> : null}
+            {eyebrow ? <T variant="footnote" tone="label2" weight="600" lines={1} style={s.eyebrow}>{eyebrow.toUpperCase()}</T> : null}
             <T variant="largeTitle" lines={1}>{title}</T>
           </View>
           {trailing ? <HStack gap={space.sm}>{trailing}</HStack> : null}

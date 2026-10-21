@@ -135,7 +135,7 @@ export default function ClientScreen() {
                   <Ring
                     value={activePack && activePack.creditsTotal > 0 ? Math.max(0, profile.creditsRemaining) / activePack.creditsTotal : 0}
                     hue={profile.creditsRemaining <= 0 ? 'red' : profile.creditsRemaining <= 2 ? 'orange' : 'green'}
-                    size={54} stroke={7}
+                    size={58} stroke={6}
                   >
                     <T variant="headline">{profile.creditsRemaining}</T>
                   </Ring>
@@ -149,8 +149,8 @@ export default function ClientScreen() {
               </Card>
               <Card style={{ flex: 1 }}>
                 <HStack gap={space.md}>
-                  <Ring value={stick.data?.rate ?? 0} hue="pink" size={54} stroke={7}>
-                    <T variant="footnote" weight="700">{stick.data?.rate == null ? '—' : `${Math.round(stick.data.rate * 100)}%`}</T>
+                  <Ring value={stick.data?.rate ?? 0} hue="pink" size={58} stroke={6}>
+                    <T variant="caption" weight="700">{stick.data?.rate == null ? '—' : `${Math.round(stick.data.rate * 100)}%`}</T>
                   </Ring>
                   <VStack gap={0} style={{ flex: 1 }}>
                     <T variant="footnote" tone="label2">Attendance</T>

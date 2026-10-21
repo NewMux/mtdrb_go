@@ -5,11 +5,14 @@ import {
 
 describe('formatting', () => {
   it('renders money from minor units without floating point', () => {
-    expect(money(50000, 'EUR')).toBe('500.00 EUR');
-    expect(money(5, 'USD')).toBe('0.05 USD');
-    expect(money(0, 'GBP')).toBe('0.00 GBP');
+    expect(money(50000, 'EUR', 'en-US')).toBe('€500.00');
+    expect(money(5, 'USD', 'en-US')).toBe('$0.05');
+    expect(money(0, 'GBP', 'en-US')).toBe('£0.00');
     // An overdrawn balance is shown as owed, not hidden.
-    expect(money(-2500, 'EUR')).toBe('-25.00 EUR');
+    expect(money(-2500, 'EUR', 'en-US')).toBe('-€25.00');
+    expect(money(123456789, 'EUR', 'en-US')).toBe('€1,234,567.89');
+    // A code Intl refuses must not throw into a render.
+    expect(money(50000, 'EURO', 'en-US')).toBe('500.00 EURO');
   });
 
   it('converts loads only at the edge', () => {
@@ -90,7 +93,7 @@ describe('parsing what a trainer types', () => {
   it('round-trips through the formatters', () => {
     expect(load(parseLoad('82.5'))).toBe('82.5 kg');
     expect(rpe(parseRpe('8.5'))).toBe('8.5');
-    expect(money(parseMoney('120.50') ?? 0, 'EUR')).toBe('120.50 EUR');
+    expect(money(parseMoney('120.50') ?? 0, 'EUR', 'en-US')).toBe('€120.50');
     expect(bodyFat(parseBodyFat('15.5'))).toBe('15.5%');
   });
 

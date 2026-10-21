@@ -7,13 +7,23 @@
  * arithmetic inline.
  */
 
-/** Renders minor units, e.g. 50000 EUR as "500.00 EUR". */
-export function money(minor: number, currency: string): string {
-  const negative = minor < 0;
-  const abs = Math.abs(minor);
-  const whole = Math.floor(abs / 100);
-  const cents = abs % 100;
-  return `${negative ? '-' : ''}${whole}.${String(cents).padStart(2, '0')} ${currency}`;
+/**
+ * Renders minor units as the device's own currency format: 50000 EUR is
+ * "€500.00" in en-US and "500,00 €" in Dublin or Paris.
+ *
+ * The currency code is typed by the trainer at sign-up, so one Intl refuses
+ * ("EURO", "xx") falls back to the plain "500.00 EUR" rather than throwing
+ * into a render.
+ */
+export function money(minor: number, currency: string, locale?: string): string {
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2,
+    }).format(minor / 100);
+  } catch {
+    const abs = Math.abs(minor);
+    return `${minor < 0 ? '-' : ''}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')} ${currency}`.trim();
+  }
 }
 
 /**
