@@ -15,7 +15,7 @@ import React, { useRef } from 'react';
 import {
   ActivityIndicator, Animated, Platform, Pressable, RefreshControl, StyleSheet,
   Switch, Text, TextInput, View,
-  type KeyboardTypeOptions, type ScrollView, type StyleProp, type TextStyle, type ViewStyle,
+  type KeyboardTypeOptions, type ScrollViewInstance, type StyleProp, type TextStyle, type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -132,7 +132,7 @@ export function Page({
   onRefresh?: () => void;
   /** Leaves room for the floating tab bar. False for pushed screens. */
   tabBar?: boolean;
-  scrollRef?: React.RefObject<ScrollView | null>;
+  scrollRef?: React.RefObject<ScrollViewInstance | null>;
   contentStyle?: StyleProp<ViewStyle>;
   keyboard?: boolean;
 }) {
@@ -147,7 +147,7 @@ export function Page({
   return (
     <View style={s.root}>
       <Animated.ScrollView
-        ref={scrollRef as React.RefObject<ScrollView>}
+        ref={scrollRef}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
         keyboardShouldPersistTaps={keyboard ? 'handled' : undefined}

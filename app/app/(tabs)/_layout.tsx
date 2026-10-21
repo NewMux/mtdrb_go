@@ -18,8 +18,8 @@
 import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Tabs } from 'expo-router';
-import { NativeTabs, Icon as NativeIcon, Label } from 'expo-router/unstable-native-tabs';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { NativeTabs } from 'expo-router/native-tabs';
+import type { BottomTabBarProps } from 'expo-router/tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Glass } from '@/ui/glass';
@@ -44,8 +44,8 @@ export default function TabsLayout() {
         {TABS.map((t) => (
           <NativeTabs.Trigger key={t.name} name={t.name}>
             {/* The names are checked against the SF Symbols set by expo-symbols' types. */}
-            <NativeIcon sf={t.sf as never} />
-            <Label>{t.title}</Label>
+            <NativeTabs.Trigger.Icon sf={t.sf as never} />
+            <NativeTabs.Trigger.Label>{t.title}</NativeTabs.Trigger.Label>
           </NativeTabs.Trigger>
         ))}
       </NativeTabs>
@@ -68,7 +68,7 @@ export default function TabsLayout() {
  * The selected tab sits in a soft lozenge rather than merely changing colour,
  * which is how the iOS 26 bar shows where you are without relying on hue.
  */
-function GlassTabBar({ state, navigation }: BottomTabBarProps) {
+function GlassTabBar({ state, emitter, navigateToTab }: BottomTabBarProps) {
   const { c } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -87,10 +87,10 @@ function GlassTabBar({ state, navigation }: BottomTabBarProps) {
               accessibilityState={{ selected: focused }}
               accessibilityLabel={tab.title}
               onPress={() => {
-                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!focused && !event.defaultPrevented) {
                   tap('select');
-                  navigation.navigate(route.name, route.params);
+                  navigateToTab(route.key);
                 }
               }}
               style={styles.item}

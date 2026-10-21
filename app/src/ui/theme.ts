@@ -12,7 +12,7 @@
  */
 
 import React, { createContext, useContext, useMemo } from 'react';
-import { Platform, StyleSheet, useColorScheme } from 'react-native';
+import { Platform, StyleSheet, useColorScheme, type ImageStyle, type TextStyle, type ViewStyle } from 'react-native';
 
 export type Scheme = 'light' | 'dark';
 export type ThemePreference = 'system' | Scheme;
@@ -198,7 +198,10 @@ export function useTheme(): ThemeValue {
  * declares its styles as a function of the palette and this hook memoises the
  * result for the current appearance.
  */
-export function makeStyles<T extends StyleSheet.NamedStyles<T>>(
+/** What `StyleSheet.create` accepts; React Native no longer exports a name for it. */
+type NamedStyles<T> = { [P in keyof T]: ViewStyle | TextStyle | ImageStyle };
+
+export function makeStyles<T extends NamedStyles<T>>(
   build: (c: Palette) => T,
 ): () => T {
   const cache: Partial<Record<Scheme, T>> = {};

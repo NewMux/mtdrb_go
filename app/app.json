@@ -22,7 +22,9 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      "expo-sqlite",
+      "expo-status-bar"
     ],
     "extra": {
       "apiBaseUrl": "http://localhost:8080"
